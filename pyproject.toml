@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wapor-anomaly-meter"
+dynamic = ["version"]
+description = "Calculate global, seasonal, agricultural WaPOR anomalies."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    {name = "Bert Coerver", email = "b.coerver@mailbox.org"}
+]
+license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "lazy-dino",
+    "xarray",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "ipython>=8.0",
+    "ipykernel>=6.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-n auto"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
