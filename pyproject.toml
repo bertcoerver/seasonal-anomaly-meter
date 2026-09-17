@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wapor-anomaly-meter"
+name = "seasonal-anomaly-meter"
 dynamic = ["version"]
-description = "Calculate global, seasonal, agricultural WaPOR anomalies."
+description = "Day-of-season-aligned anomalies for gridded fluxes, from a flux and a phenology product."
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [
@@ -17,13 +17,37 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+# Everything here is on PyPI. The package does no I/O of its own -- the caller
+# supplies the flux and the phenology as xarray objects -- so neither lazy_dino
+# nor xr_utils is needed to use it. Both are unpublished and untagged, and a
+# git URL in this list would make the built distribution ineligible for PyPI
+# upload; they live in the optional extras below instead.
 dependencies = [
-    "lazy-dino",
     "xarray",
+    "dask",
+    "numpy",
+    "pandas",
+    "zarr",
+    "rioxarray",
 ]
 
 [project.optional-dependencies]
+# align_phenology() and write_zarr() call into xr_utils for the warp and the
+# GeoZarr attributes. Both are optional: pass phenology already on the flux
+# grid, and write with to_zarr yourself, and the core needs none of this.
+geo = [
+    "xr_utils @ git+https://github.com/bertcoerver/xr-utils.git",
+    "rasterio",
+    "odc-geo",
+    "pyproj",
+]
+# What examples/ needs: fetching WaPOR and Copernicus through lazy_dino.
+examples = [
+    "seasonal-anomaly-meter[geo]",
+    "lazy_dino @ git+https://github.com/bertcoerver/lazy_dino.git",
+]
 dev = [
+    "seasonal-anomaly-meter[geo]",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.0",
