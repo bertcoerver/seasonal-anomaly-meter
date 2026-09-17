@@ -36,14 +36,18 @@ _INT16_MAX = 32767
 _COMPRESSOR_KWARGS = {"cname": "zstd", "clevel": 5, "shuffle": "bitshuffle"}
 
 
-def _compressors():
+def _compressors() -> list[dict]:
     """Blosc/zstd with bitshuffle -- the codec the reference store used.
 
-    Imported lazily so that merely importing this module does not require zarr.
-    """
-    from zarr.codecs import BloscCodec
+    Given in zarr's own JSON metadata form rather than as a
+    ``zarr.codecs.BloscCodec``. The two land as the same codec on disk, but the
+    dict means nothing in this package imports zarr: every encoding here stays a
+    plain dict, and zarr is needed only by whoever finally calls ``to_zarr``.
 
-    return [BloscCodec(**_COMPRESSOR_KWARGS)]
+    Returns a fresh list each call, so a caller editing one variable's encoding
+    cannot reach into another's.
+    """
+    return [{"name": "blosc", "configuration": dict(_COMPRESSOR_KWARGS)}]
 
 
 def baseline_encoding(

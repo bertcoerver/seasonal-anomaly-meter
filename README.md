@@ -146,18 +146,24 @@ replacing those two files and nothing else.
 
 ## Installation
 
-The package itself needs nothing but PyPI:
+The package itself needs nothing but PyPI, and only what it computes with —
+xarray, dask, numpy:
 
 ```bash
 pip install -e .
 ```
 
-Two optional extras pull in the unpublished siblings:
+Storing the result is an extra, and so are the unpublished siblings:
 
 | Extra | Adds | Needed for |
 |---|---|---|
-| `geo` | [`xr_utils`][xr_utils] | `align_phenology`, `write_zarr` |
+| `zarr` | `zarr>=3` | `open_zarr`, `write_zarr`, or your own `to_zarr` |
+| `geo` | `zarr` + [`xr_utils`][xr_utils] | `align_phenology`, `write_zarr` |
 | `examples` | `geo` + [`lazy_dino`][lazy_dino] | `examples/` |
+
+`baseline_encoding` and `anomaly_encoding` need none of these: they return plain
+dicts, so you can build the encoding with the bare install and hand it to a
+`to_zarr` elsewhere.
 
 ```bash
 pip install -e ".[dev]"

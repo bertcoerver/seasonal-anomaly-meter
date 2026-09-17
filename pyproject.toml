@@ -18,24 +18,34 @@ classifiers = [
 ]
 
 # Everything here is on PyPI. The package does no I/O of its own -- the caller
-# supplies the flux and the phenology as xarray objects -- so neither lazy_dino
-# nor xr_utils is needed to use it. Both are unpublished and untagged, and a
-# git URL in this list would make the built distribution ineligible for PyPI
-# upload; they live in the optional extras below instead.
+# supplies the flux and the phenology as xarray objects, and gets Datasets back
+# -- so neither lazy_dino nor xr_utils is needed to use it. Both are unpublished
+# and untagged, and a git URL in this list would make the built distribution
+# ineligible for PyPI upload; they live in the optional extras below instead.
+#
+# This list is the compute path and nothing else. zarr is deliberately absent:
+# io.py builds its encodings as plain dicts (codecs included, in zarr's own JSON
+# form), so nothing here imports zarr, and only the to_zarr call at the very end
+# -- the caller's, or write_zarr's -- actually needs it installed. That is the
+# same arrangement xarray has with its own backends.
 dependencies = [
     "xarray",
     "dask",
     "numpy",
-    "pandas",
-    "zarr",
-    "rioxarray",
 ]
 
 [project.optional-dependencies]
+# open_zarr() and write_zarr() hand off to xarray's zarr backend, and the
+# encodings use zarr 3's `compressors` key and codec metadata -- zarr 2 knows
+# neither. Not needed to compute a baseline or an anomaly, only to store one.
+zarr = [
+    "zarr>=3",
+]
 # align_phenology() and write_zarr() call into xr_utils for the warp and the
 # GeoZarr attributes. Both are optional: pass phenology already on the flux
 # grid, and write with to_zarr yourself, and the core needs none of this.
 geo = [
+    "seasonal-anomaly-meter[zarr]",
     "xr_utils @ git+https://github.com/bertcoerver/xr-utils.git",
     "rasterio",
     "odc-geo",
@@ -48,6 +58,9 @@ examples = [
 ]
 dev = [
     "seasonal-anomaly-meter[geo]",
+    # The tests' own CRS round-trip, not the package's: .rio.write_crs on the
+    # way in, .rio.crs on the way back out of the store.
+    "rioxarray",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.0",
