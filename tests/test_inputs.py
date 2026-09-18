@@ -277,3 +277,28 @@ def test_phenology_is_forward_filled_to_the_query_year(flux, phenology):
         flux, stale, baseline, "2021-06-15", forward_fill=False
     ).compute()
     assert bool((literal["DOS"].isel(time=0) == 0).all())
+
+
+def test_a_phenology_too_thin_for_the_baseline_is_refused(flux, phenology):
+    """The failure that produced an all-NaN store has to be loud.
+
+    A phenology source that quietly returns fewer years than asked (a catalog
+    whose item timestamps collapse a dozen annual products onto three) leaves
+    every pixel below min_years, so the store is written, valid and empty.
+    """
+    thin = phenology.sel(year=[2018, 2019])
+    with pytest.raises(ValueError, match="fewer than the 3 years"):
+        seasonal_baseline(flux, thin)
+
+    # ...and it is the *overlap* that counts, not the phenology's own axis: a
+    # long phenology whose years sit outside the flux is just as empty.
+    elsewhere = phenology.assign_coords(year=phenology["year"].values - 10)
+    with pytest.raises(ValueError, match="no year within the flux"):
+        seasonal_baseline(flux, elsewhere)
+
+
+def test_a_thin_phenology_is_allowed_when_min_years_says_so(flux, phenology):
+    """The guard states the rule, it does not add one: lowering min_years works."""
+    thin = phenology.sel(year=[2018, 2019])
+    baseline = seasonal_baseline(flux, thin, min_years=2).compute()
+    assert bool((baseline["acc_count"] >= 2).any())

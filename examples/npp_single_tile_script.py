@@ -41,8 +41,8 @@ from seasonal_anomaly_meter import (
 VARIABLE = "L1-UTM-AETI-D"
 #: 36Q covers the Gezira scheme in Sudan -- irrigated, strongly seasonal, and
 #: the area the original drought-depth work was tested on.
-TILE = "36Q"
-DATES = [str(x.date()) for x in pd.date_range("2025-01-01", "2026-08-01") if x.day in [1, 11, 21]]
+TILE = "36P"
+DATES = [str(x.date()) for x in pd.date_range("2018-01-01", "2026-08-01") if x.day in [1, 11, 21]]
 
 OUT_DIR = Path(os.path.expanduser("~/Local/sam"))
 
@@ -103,13 +103,25 @@ print(f"wrote {baseline_store}")
 
 # ---- Stage 2: the anomalies (fast, rerun operationally) ---------------
 
+# Read the baseline back rather than reusing the materialised one above. It is
+# (season, pos, y, x) -- gigabytes for a whole tile -- and compute_anomaly puts
+# it into the graph once per query date, so an in-memory array is embedded a few
+# hundred times over and building the graph alone exhausts the machine. The
+# store is chunked with season and pos whole, which is what the curve lookup
+# wants, so reopening costs nothing and each chunk is read only as it is needed.
+baseline = open_zarr(baseline_store)
+
 # A Copernicus season can run ~500 days, so reach back far enough to contain
 # the start of every season active on the query dates -- no further, the
 # accumulation runs over whatever series it is given.
 start = f"{min(int(d[:4]) for d in DATES) - 2}-01-01"
+# Left lazy on purpose: this is one field per query date per variable, and for
+# a whole tile over years of dates the materialised result runs to tens of GB.
+# to_zarr walks the graph chunk by chunk, and anomaly_encoding already writes
+# one date per file, so nothing larger than a chunk is ever held at once.
 anomalies = seasonal_anomalies(
     flux.sel(time=slice(start, None)), phenology, baseline, DATES
-).compute()
+)
 
 anomaly_store = OUT_DIR / f"{VARIABLE}_{tile.code}_anomaly.zarr"
 write_zarr(anomalies, anomaly_store, anomaly_encoding(anomalies))

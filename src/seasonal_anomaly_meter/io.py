@@ -196,4 +196,42 @@ def write_zarr(ds: xr.Dataset, store, encoding: dict, *, mode: str = "w") -> Non
         grid_mapping = variable.encoding.get("grid_mapping")
         if grid_mapping and name in merged:
             merged[name]["grid_mapping"] = grid_mapping
+    ds = _align_to_encoding(ds, merged)
     ds.to_zarr(store, mode=mode, encoding=merged, consolidated=False)
+
+
+def _align_to_encoding(ds: xr.Dataset, encoding: dict) -> xr.Dataset:
+    """Rechunk dask-backed variables onto the zarr chunk grid they will be written to.
+
+    The encodings here fix the zarr chunk shape, while a lazy Dataset's dask
+    chunks come from whatever the *input* stores were written with -- and those
+    two only line up by luck. When they do not, ``to_zarr`` refuses the write
+    outright ("would overlap multiple Dask chunks"), because two dask chunks
+    landing in one zarr chunk means two parallel tasks writing the same file.
+
+    The refusal arrives at the end of the run, after every earlier stage has
+    been paid for, so it is worth pre-empting. Each misaligned dimension is
+    rechunked to the nearest whole multiple of its zarr chunk, which keeps the
+    task size the graph already chose rather than forcing it down to one task
+    per zarr chunk. Dimensions that already align are left untouched, so a
+    Dataset written on a matching grid -- the normal case -- is not rechunked
+    at all.
+    """
+    ds = ds.copy()
+    for name, spec in encoding.items():
+        zarr_chunks = spec.get("chunks")
+        variable = ds.get(name)
+        if not zarr_chunks or variable is None or variable.chunks is None:
+            continue
+        rechunk = {}
+        for dim, size, dask_chunks in zip(variable.dims, zarr_chunks, variable.chunks):
+            # Only interior boundaries matter: a short final chunk is a partial
+            # zarr chunk, which is fine, and every other boundary has to fall on
+            # a multiple of the zarr chunk size.
+            edges = np.cumsum(dask_chunks[:-1])
+            if not np.any(edges % size):
+                continue
+            rechunk[dim] = size * max(1, round(max(dask_chunks) / size))
+        if rechunk:
+            ds[name] = variable.chunk(rechunk)
+    return ds

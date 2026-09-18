@@ -216,6 +216,26 @@ def test_stores_round_trip_with_their_crs(tmp_path, flux, seasons, baseline):
     )
 
 
+def test_lazy_write_survives_dask_chunks_off_the_zarr_grid(tmp_path, flux, seasons, baseline):
+    """A lazy result inherits its input stores' chunks, which need not match.
+
+    Left alone, ``to_zarr`` refuses the whole write ("would overlap multiple
+    Dask chunks") -- at the end of the run, after every earlier stage has been
+    paid for.
+    """
+    result = compute_anomaly(flux, seasons, baseline, QUERY, YEAR_MIN)
+    misaligned = result.chunk({"y": (1, 1, 2), "x": 4})
+    assert misaligned["acc"].chunks[1] == (1, 1, 2)  # off the grid the encoding sets
+
+    encoding = anomaly_encoding(misaligned, chunks=(2, 4))
+    write_zarr(misaligned, tmp_path / "anomaly.zarr", encoding)
+
+    reopened = open_zarr(tmp_path / "anomaly.zarr")
+    np.testing.assert_allclose(
+        reopened["acc"].values, result["acc"].compute().values, equal_nan=True
+    )
+
+
 def test_packing_refuses_to_saturate(baseline):
     """Silent int16 saturation is the failure that produced wrapped values before."""
     too_big = baseline.copy()

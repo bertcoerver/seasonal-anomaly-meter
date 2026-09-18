@@ -72,10 +72,12 @@ def seasonal_baseline(
     resolution = resolution or infer_resolution(flux["time"].values)
     year_min = year_min if year_min is not None else _first_year(flux)
 
+    first, last = _year_span(flux)
+    _check_overlapping_years(phenology, first, last, min_years)
+
     flux, phenology = _chunk(flux, phenology, chunks)
     seasons = season_indices(phenology, year_min, resolution)
 
-    first, last = _year_span(flux)
     logger.info(
         "baseline over %d-%d (%s), %d x %d px, %s flux steps",
         first,
@@ -193,6 +195,31 @@ def _chunk(
     flux = flux.chunk({"time": -1, "y": chunks, "x": chunks})
     phenology = phenology.chunk({"y": chunks, "x": chunks, "season": -1, "year": -1})
     return flux, phenology
+
+
+def _check_overlapping_years(
+    phenology: xr.Dataset, first: int, last: int, min_years: int
+) -> None:
+    """Raise when too few phenology years overlap the flux to build a baseline.
+
+    A season contributes to the baseline only where both inputs cover its year,
+    so the years that matter are the intersection, not the phenology's own axis.
+    Below ``min_years`` of them every pixel fails the count test and the store
+    comes out empty -- a silent, expensive nothing, and one that looks like a
+    real baseline until someone reads its values. Worth naming up front: the
+    usual cause is a phenology source that quietly returned fewer years than it
+    was asked for.
+    """
+    years = [int(y) for y in np.atleast_1d(phenology["year"].values)]
+    overlap = sorted(y for y in years if first <= y <= last)
+    if len(overlap) < min_years:
+        raise ValueError(
+            f"the phenology covers {overlap or 'no year'} within the flux's "
+            f"{first}-{last}, which is fewer than the {min_years} years "
+            "min_years requires, so every pixel's baseline would be empty. "
+            f"The phenology's own year axis is {years}. Supply more years, or "
+            "lower min_years if that few is genuinely what you want."
+        )
 
 
 def _first_year(flux: xr.DataArray) -> int:
