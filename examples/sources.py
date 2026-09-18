@@ -7,13 +7,19 @@ methodology was developed against. Keeping it here is what lets the package
 itself depend on nothing but PyPI.
 
 ``lazy_dino`` does the discovery, credential plumbing and windowed lazy reads;
-nothing here opens a file itself.
+nothing here opens a file itself. A run starts at :func:`get_wapor_tile`, which
+resolves one tile of WaPOR's UTM grid, and both loaders take that tile.
 
 **The flux never moves.** WaPOR is the example grid, so :func:`load_flux`
 returns the tile on its native UTM pixels and the phenology is warped onto it
 (by the package's ``align_phenology``, using nearest neighbour). That is the
 reverse of the original methodology, which interpolated every dekad of flux
 onto the Copernicus grid.
+
+Both loaders return a Dataset, chunked by their own ``chunk`` argument. Which
+axes have to stay whole is a property of the product and of what the pipeline
+does with it, not of any one script, so it lives here rather than in a
+``.chunk`` call at the call site.
 """
 
 from __future__ import annotations
@@ -25,11 +31,11 @@ import xarray as xr
 from lazy_dino import CDSE, WAPOR
 
 from seasonal_anomaly_meter import align_phenology
-from wapor_tiles import Tile
+from wapor_tiles import Tile, list_tiles
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["load_flux", "load_phenology", "LSP_COLLECTION"]
+__all__ = ["get_wapor_tile", "load_flux", "load_phenology", "LSP_COLLECTION"]
 
 #: Copernicus Land Surface Phenology, 300 m global, yearly. Season start/end are
 #: published as day-of-year, two seasons (``s1``/``s2``) per year, from 2014.
@@ -42,17 +48,42 @@ LSP_COLLECTION = "clms_lsp_global_300m_yearly_v2_cog"
 PHENOLOGY_PAD_DEG = 0.02
 
 
+def get_wapor_tile(variable: str, code: str) -> Tile:
+    """One WaPOR UTM tile by its MGRS grid-zone code.
+
+    ``get_wapor_tile("L1-UTM-NPP-D", "36Q")`` -- the grid every run starts from,
+    since WaPOR publishes one file per tile and a tile is the largest area that
+    stays in a single CRS. What comes back is the tile's extent and grid, not
+    its data; :func:`load_flux` turns it into arrays.
+
+    The grid is enumerated from WaPOR's catalog, so this needs network access
+    the first time it is asked about a variable (``list_tiles`` caches it).
+    """
+    tiles = list_tiles(variable)
+    try:
+        return tiles[code]
+    except KeyError:
+        raise KeyError(
+            f"{code!r} is not a tile of {variable!r}'s grid "
+            f"({len(tiles)} tiles available)."
+        ) from None
+
+
 def load_flux(
     variable: str,
     tile: Tile,
     time_range: tuple[str, str],
     *,
+    chunk: int | None = None,
     reader=None,
-) -> xr.DataArray:
+) -> xr.Dataset:
     """One WaPOR variable over one UTM tile, on the tile's native grid.
 
-    Returns a lazy, dask-backed ``(time, y, x)`` DataArray in the tile's UTM
-    CRS. This grid is the example grid: every other input is warped onto it.
+    Returns a lazy, dask-backed ``(time, y, x)`` Dataset holding ``variable``,
+    in the tile's UTM CRS. This grid is the example grid: every other input is
+    warped onto it. A Dataset rather than a DataArray because that is what
+    ``to_zarr`` takes, and caching this to a store is the normal thing to do
+    with it; the package's ``as_flux`` accepts either.
 
     A tile's lon/lat envelope is a curved quadrilateral, so its bounding box
     necessarily overlaps neighbouring tiles -- including ones in adjacent UTM
@@ -60,6 +91,11 @@ def load_flux(
     EPSG (it mosaics same-CRS tiles but never reprojects), so this function
     picks the node matching ``tile.epsg`` and then trims to the tile's exact
     native bounds. The result is the published tile, pixel for pixel.
+
+    ``chunk`` sets the spatial chunk in pixels; the ``time`` axis is always kept
+    whole, because the accumulation kernel builds one prefix sum over the full
+    series and a split time axis would force a shuffle for every day-of-season
+    slot. Leave it ``None`` to keep whatever chunking ``lazy_dino`` returned.
     """
     minx, miny, maxx, maxy = tile.lonlat_bounds()
     kwargs = {"reader": reader} if reader is not None else {}
@@ -92,7 +128,11 @@ def load_flux(
             f"{da.sizes['y']}x{da.sizes['x']}. The catalog grid and the "
             "published rasters disagree."
         )
-    return da
+
+    ds = da.to_dataset(name=variable)
+    if chunk is not None:
+        ds = ds.chunk({"time": -1, "y": chunk, "x": chunk})
+    return ds
 
 
 def load_phenology(
@@ -102,7 +142,8 @@ def load_phenology(
     seasons: tuple[int, ...] = (1, 2),
     include_qa: bool = True,
     pad_deg: float = PHENOLOGY_PAD_DEG,
-    example: xr.DataArray | None = None,
+    example: xr.DataArray | xr.Dataset | None = None,
+    chunk: int | None = None,
 ) -> xr.Dataset:
     """Copernicus season start/end for one tile, warped onto the tile's grid.
 
@@ -114,6 +155,10 @@ def load_phenology(
     ``example`` must be supplied to place the result on the flux grid. Without
     it the phenology is returned on its native EPSG:4326 grid, which is useful
     for inspection but is not what the pipeline consumes.
+
+    ``chunk`` sets the spatial chunk in pixels, applied after the warp; the
+    ``season`` and ``year`` axes are always kept whole, since a pixel's season
+    lookup reads all of both. Leave it ``None`` to keep the warp's own chunking.
     """
     years = list(years)
     variables = [
@@ -138,10 +183,12 @@ def load_phenology(
 
     ds = _stack_seasons(raw, seasons=seasons, include_qa=include_qa)
     ds = _label_years(ds, years)
+    if example is not None:
+        ds = align_phenology(ds, example)
 
-    if example is None:
-        return ds
-    return align_phenology(ds, example)
+    if chunk is not None:
+        ds = ds.chunk({"y": chunk, "x": chunk, "season": -1, "year": -1})
+    return ds
 
 
 def _phenology_time_range(variable: str, years: list[int]) -> tuple[str, str]:

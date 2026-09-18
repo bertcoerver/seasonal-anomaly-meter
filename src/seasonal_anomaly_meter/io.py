@@ -10,6 +10,16 @@ be negative, deficits wrapped around to ~65529 and had to be masked in the
 dashboard's front end. Every anomaly variable here is signed, and
 :func:`check_packing_range` refuses to write values a scale factor cannot hold
 rather than letting them saturate quietly.
+
+This module builds encodings and nothing else -- it knows this package's
+variable names and dimension order, which is the part no general-purpose
+library can supply. The writing and reading is generic and lives in
+``xr_utils.geozarr``: pass one of these dicts to ``write_geozarr`` to get a
+store GDAL and QGIS open georeferenced, and read it back with ``open_geozarr``
+so its CRS survives as a coordinate. Both are optional -- the dicts here are
+plain ``to_zarr`` encodings and work with a bare
+``ds.to_zarr(store, encoding=..., consolidated=False)``; you lose only the
+georeferencing.
 """
 
 from __future__ import annotations
@@ -22,8 +32,6 @@ __all__ = [
     "baseline_encoding",
     "anomaly_encoding",
     "check_packing_range",
-    "open_zarr",
-    "write_zarr",
 ]
 
 #: ``int16`` fill value for packed variables. ``-32768`` is the type's minimum,
@@ -93,17 +101,32 @@ def baseline_encoding(
     return encoding
 
 
+#: The anomaly variables carried in the flux's own units, and so the only ones
+#: a flux scale factor means anything for. ``anomaly_rel`` is a percentage and
+#: ``anomaly_z`` a standard-deviation count: both have their own natural
+#: resolution, and packing them at the flux's would be a category error -- at
+#: ``scale_factor=1`` a z-score would be rounded to whole sigma.
+_PACKABLE_ANOMALIES = ("acc", "acc_baseline", "anomaly_abs")
+
+
 def anomaly_encoding(
     ds: xr.Dataset,
     *,
+    scale_factor: float | None = None,
     chunks: tuple[int, int] = (256, 256),
 ) -> dict:
     """Zarr encoding for :func:`~seasonal_anomaly_meter.anomaly.compute_anomaly`.
 
     One date per chunk along ``time`` so an operational rerun appends without
-    rewriting earlier dates. The anomaly fields stay ``float32``: they are
-    signed, they are the product people read, and at one date per file the
-    space saved by packing is not worth the extra failure mode.
+    rewriting earlier dates.
+
+    By default every anomaly field stays ``float32``: they are signed, they are
+    the product people read, and at one date per file the space saved by packing
+    is not worth the extra failure mode. Pass ``scale_factor`` -- the same one
+    the baseline was packed at -- to halve the store anyway, which is worth
+    doing once the run covers years of dates rather than a handful. Only
+    :data:`_PACKABLE_ANOMALIES` are packed, since only they are in the flux's
+    units; check the range first with :func:`check_packing_range`.
     """
     chunk_shape = (1, *chunks)
     encoding = {}
@@ -118,6 +141,8 @@ def anomaly_encoding(
             spec["dtype"] = "uint16"
         elif name == "season":
             spec["dtype"] = "uint8"
+        elif scale_factor is not None and name in _PACKABLE_ANOMALIES:
+            spec.update(dtype="int16", scale_factor=scale_factor, _FillValue=PACKED_FILL)
         else:
             spec["dtype"] = "float32"
         encoding[name] = spec
@@ -146,92 +171,3 @@ def check_packing_range(ds: xr.Dataset, scale_factor: float, variables=("acc_mea
                 "scale_factor (coarser resolution) or scale_factor=None to "
                 "store float32."
             )
-
-
-def open_zarr(store, **kwargs) -> xr.Dataset:
-    """Open a store written by :func:`write_zarr`, with its CRS intact.
-
-    Plain ``xr.open_zarr`` leaves ``spatial_ref`` as an ordinary data variable,
-    so ``.rio.crs`` comes back ``None`` and the dataset looks unreferenced even
-    though the store is fine -- GDAL and QGIS read it correctly either way.
-    Promoting it back to a coordinate needs ``decode_coords="all"``, which is
-    easy to forget and confusing when missed, so it is the default here.
-    """
-    kwargs.setdefault("decode_coords", "all")
-    kwargs.setdefault("consolidated", False)
-    return xr.open_zarr(store, **kwargs)
-
-
-def write_zarr(ds: xr.Dataset, store, encoding: dict, *, mode: str = "w") -> None:
-    """Write ``ds`` with GeoZarr CRS attributes so GDAL and QGIS can read it.
-
-    xarray omits the CF ``grid_mapping`` attribute that points a variable at
-    its ``spatial_ref`` coordinate, which leaves the store unreadable as
-    geodata; ``xr_utils.set_geozarr_attrs`` puts it back.
-
-    It does so by writing into each variable's ``.encoding``, which an explicit
-    ``encoding=`` argument to ``to_zarr`` replaces wholesale -- so the two have
-    to be merged rather than passed independently. Getting this wrong produces
-    a store that looks fine until something tries to read its CRS.
-
-    ``xr_utils`` is an optional dependency, so this function is too: the
-    encodings from :func:`baseline_encoding` and :func:`anomaly_encoding` are
-    plain dicts that work with a bare ``ds.to_zarr(store, encoding=...)``. You
-    lose only the georeferencing that makes the store open in GDAL and QGIS.
-    """
-    try:
-        from xr_utils import set_geozarr_attrs
-    except ImportError:
-        raise ImportError(
-            "write_zarr needs xr_utils for the GeoZarr attributes, which is an "
-            "optional dependency: pip install 'seasonal-anomaly-meter[geo]'. To "
-            "write without it, pass this module's encoding dict straight to "
-            "ds.to_zarr(store, encoding=..., consolidated=False) -- the store "
-            "will be valid but will not carry its CRS."
-        ) from None
-
-    ds = set_geozarr_attrs(ds)
-    merged = {name: dict(spec) for name, spec in encoding.items()}
-    for name, variable in ds.data_vars.items():
-        grid_mapping = variable.encoding.get("grid_mapping")
-        if grid_mapping and name in merged:
-            merged[name]["grid_mapping"] = grid_mapping
-    ds = _align_to_encoding(ds, merged)
-    ds.to_zarr(store, mode=mode, encoding=merged, consolidated=False)
-
-
-def _align_to_encoding(ds: xr.Dataset, encoding: dict) -> xr.Dataset:
-    """Rechunk dask-backed variables onto the zarr chunk grid they will be written to.
-
-    The encodings here fix the zarr chunk shape, while a lazy Dataset's dask
-    chunks come from whatever the *input* stores were written with -- and those
-    two only line up by luck. When they do not, ``to_zarr`` refuses the write
-    outright ("would overlap multiple Dask chunks"), because two dask chunks
-    landing in one zarr chunk means two parallel tasks writing the same file.
-
-    The refusal arrives at the end of the run, after every earlier stage has
-    been paid for, so it is worth pre-empting. Each misaligned dimension is
-    rechunked to the nearest whole multiple of its zarr chunk, which keeps the
-    task size the graph already chose rather than forcing it down to one task
-    per zarr chunk. Dimensions that already align are left untouched, so a
-    Dataset written on a matching grid -- the normal case -- is not rechunked
-    at all.
-    """
-    ds = ds.copy()
-    for name, spec in encoding.items():
-        zarr_chunks = spec.get("chunks")
-        variable = ds.get(name)
-        if not zarr_chunks or variable is None or variable.chunks is None:
-            continue
-        rechunk = {}
-        for dim, size, dask_chunks in zip(variable.dims, zarr_chunks, variable.chunks):
-            # Only interior boundaries matter: a short final chunk is a partial
-            # zarr chunk, which is fine, and every other boundary has to fall on
-            # a multiple of the zarr chunk size.
-            edges = np.cumsum(dask_chunks[:-1])
-            if not np.any(edges % size):
-                continue
-            rechunk[dim] = size * max(1, round(max(dask_chunks) / size))
-        if rechunk:
-            ds[name] = variable.chunk(rechunk)
-    return ds

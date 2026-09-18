@@ -1,6 +1,6 @@
 """End-to-end run for one WaPOR UTM tile, using NPP.
 
-Fetches the two inputs from WaPOR and Copernicus (``wapor_sources``, the only
+Fetches the two inputs from WaPOR and Copernicus (``sources``, the only
 code in this repository that uses ``lazy_dino``), builds the multi-year baseline
 for a tile, then computes anomalies for a few query dates against it, writing
 both stores as zarr in the tile's own UTM CRS.
@@ -29,8 +29,8 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
-from wapor_sources import load_flux, load_phenology
-from wapor_tiles import get_tile
+from examples.sources import get_wapor_tile, load_flux, load_phenology
+from xr_utils import write_geozarr
 
 from seasonal_anomaly_meter import (
     anomaly_encoding,
@@ -38,7 +38,6 @@ from seasonal_anomaly_meter import (
     check_packing_range,
     seasonal_anomalies,
     seasonal_baseline,
-    write_zarr,
 )
 
 VARIABLE = "L1-UTM-NPP-D"
@@ -72,7 +71,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("rasterio").setLevel(logging.ERROR)
 
-    tile = get_tile(args.variable, args.tile)
+    tile = get_wapor_tile(args.variable, args.tile)
     print(f"tile {tile.code}  EPSG:{tile.epsg}  {tile.shape[0]}x{tile.shape[1]} px")
 
     # One window, shared by both stages -- they must sit on the same grid, and
@@ -107,7 +106,7 @@ def main() -> None:
 
     check_packing_range(baseline, SCALE_FACTOR)
     baseline_store = args.out / f"{args.variable}_{tile.code}_{suffix}_baseline.zarr"
-    write_zarr(baseline, baseline_store, baseline_encoding(baseline, scale_factor=SCALE_FACTOR))
+    write_geozarr(baseline, baseline_store, baseline_encoding(baseline, scale_factor=SCALE_FACTOR))
     print(f"  wrote {baseline_store} ({_du(baseline_store):.1f} MB)")
 
     # ---- Stage 2: the anomalies (fast, rerun operationally) --------------
@@ -129,13 +128,24 @@ def main() -> None:
     print(f"  computed in {time.perf_counter() - started:.0f}s")
     _report_anomalies(anomalies)
 
+    # Packed at the same scale factor as the baseline: acc, acc_baseline and
+    # anomaly_abs are in the flux's units, so the range that holds one holds
+    # the others.
+    check_packing_range(anomalies, SCALE_FACTOR, variables=("acc", "acc_baseline", "anomaly_abs"))
     anomaly_store = args.out / f"{args.variable}_{tile.code}_{suffix}_anomaly.zarr"
-    write_zarr(anomalies, anomaly_store, anomaly_encoding(anomalies))
+    write_geozarr(
+        anomalies, anomaly_store, anomaly_encoding(anomalies, scale_factor=SCALE_FACTOR)
+    )
     print(f"  wrote {anomaly_store} ({_du(anomaly_store):.1f} MB)")
 
 
 def _inputs(variable, tile, window, *, years, time_range):
-    """The two arrays the package wants: a flux rate, and phenology on its grid."""
+    """The two inputs the package wants: a flux rate, and phenology on its grid.
+
+    Both come back as Datasets; ``as_flux`` picks the single variable out of the
+    flux one. No ``chunk=`` here -- this script computes each stage outright
+    rather than caching a store, so the loaders' own chunking is fine.
+    """
     flux = load_flux(variable, tile, time_range)
     if window is not None:
         flux = flux.isel(window)

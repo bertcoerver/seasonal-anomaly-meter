@@ -26,8 +26,8 @@ classifiers = [
 # This list is the compute path and nothing else. zarr is deliberately absent:
 # io.py builds its encodings as plain dicts (codecs included, in zarr's own JSON
 # form), so nothing here imports zarr, and only the to_zarr call at the very end
-# -- the caller's, or write_zarr's -- actually needs it installed. That is the
-# same arrangement xarray has with its own backends.
+# -- the caller's, or xr_utils.write_geozarr's -- actually needs it installed.
+# That is the same arrangement xarray has with its own backends.
 dependencies = [
     "xarray",
     "dask",
@@ -35,15 +35,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# open_zarr() and write_zarr() hand off to xarray's zarr backend, and the
-# encodings use zarr 3's `compressors` key and codec metadata -- zarr 2 knows
+# Writing a store hands off to xarray's zarr backend, and the encodings in
+# io.py use zarr 3's `compressors` key and codec metadata -- zarr 2 knows
 # neither. Not needed to compute a baseline or an anomaly, only to store one.
 zarr = [
     "zarr>=3",
 ]
-# align_phenology() and write_zarr() call into xr_utils for the warp and the
-# GeoZarr attributes. Both are optional: pass phenology already on the flux
-# grid, and write with to_zarr yourself, and the core needs none of this.
+# align_phenology() calls into xr_utils for the warp, and xr_utils.write_geozarr
+# / open_geozarr are how the examples and tests write and read stores that open
+# georeferenced in QGIS. Both are optional: pass phenology already on the flux
+# grid, and write io.py's encoding dicts with plain to_zarr yourself, and the
+# core needs none of this.
 geo = [
     "seasonal-anomaly-meter[zarr]",
     "xr_utils @ git+https://github.com/bertcoerver/xr-utils.git",

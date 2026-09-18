@@ -44,8 +44,6 @@ from seasonal_anomaly_meter.io import (
     anomaly_encoding,
     baseline_encoding,
     check_packing_range,
-    open_zarr,
-    write_zarr,
 )
 from seasonal_anomaly_meter.pipeline import seasonal_anomalies, seasonal_baseline
 from seasonal_anomaly_meter.season import (
@@ -86,11 +84,10 @@ __all__ = [
     "DEKADAL",
     "MONTHLY",
     "infer_resolution",
-    # io
+    # io -- encodings only; the writing and reading is xr_utils.geozarr's
+    # write_geozarr / open_geozarr
     "baseline_encoding",
     "anomaly_encoding",
     "check_packing_range",
-    "open_zarr",
-    "write_zarr",
     "__version__",
 ]

@@ -77,9 +77,11 @@ per tile, expensively so. `tests/test_accumulate.py` pins that equivalence.
 ## Usage
 
 ```python
+from xr_utils import open_geozarr, write_geozarr
+
 from seasonal_anomaly_meter import (
     seasonal_baseline, seasonal_anomalies, align_phenology,
-    baseline_encoding, anomaly_encoding, write_zarr, open_zarr,
+    baseline_encoding, anomaly_encoding,
 )
 
 # flux:      (time, y, x) per-day rate, loaded however you like
@@ -88,13 +90,22 @@ phenology = align_phenology(phenology, flux)      # skip if grids already match
 
 # Stage 1 -- slow, run rarely.
 baseline = seasonal_baseline(flux, phenology).compute()
-write_zarr(baseline, "36P_baseline.zarr", baseline_encoding(baseline))
+write_geozarr(baseline, "36P_baseline.zarr", baseline_encoding(baseline))
 
 # Stage 2 -- fast, run whenever new data lands.
-baseline = open_zarr("36P_baseline.zarr")
+baseline = open_geozarr("36P_baseline.zarr")
 anomalies = seasonal_anomalies(flux, phenology, baseline, ["2024-09-01"]).compute()
-write_zarr(anomalies, "36P_anomaly.zarr", anomaly_encoding(anomalies))
+write_geozarr(anomalies, "36P_anomaly.zarr", anomaly_encoding(anomalies))
 ```
+
+This package builds the *encodings* — it knows the variable names and the
+dimension order, which is the part no general-purpose library can supply — and
+leaves the writing and reading to [`xr_utils.geozarr`][xr_utils], where
+`write_geozarr` merges the CF `grid_mapping` pointer into the encoding (so the
+store opens georeferenced in QGIS) and rechunks onto the zarr chunk grid, and
+`open_geozarr` brings the CRS back as a coordinate. Neither is required: the
+encodings are plain dicts, so `ds.to_zarr(store, encoding=..., consolidated=False)`
+works on the bare install and costs you only the georeferencing.
 
 The temporal resolution is read off the time axis; pass `resolution=` to override.
 `year_min` — the anchor both stages index their periods against — is recorded in
@@ -128,7 +139,7 @@ runs both stages over the Gezira irrigation scheme in Sudan with WaPOR NPP and
 Copernicus phenology. Drop the window arguments and pass `--full` for the whole
 tile; pick a tile with `wapor_tiles.list_tiles("L1-UTM-NPP-D")` (527 of them).
 
-`examples/wapor_sources.py` and `examples/wapor_tiles.py` are the only code in
+`examples/sources.py` and `examples/wapor_tiles.py` are the only code in
 this repository that uses `lazy_dino`. Swapping in a different data source means
 replacing those two files and nothing else.
 
@@ -157,8 +168,8 @@ Storing the result is an extra, and so are the unpublished siblings:
 
 | Extra | Adds | Needed for |
 |---|---|---|
-| `zarr` | `zarr>=3` | `open_zarr`, `write_zarr`, or your own `to_zarr` |
-| `geo` | `zarr` + [`xr_utils`][xr_utils] | `align_phenology`, `write_zarr` |
+| `zarr` | `zarr>=3` | storing a result at all — `write_geozarr` or your own `to_zarr` |
+| `geo` | `zarr` + [`xr_utils`][xr_utils] | `align_phenology`, `write_geozarr`, `open_geozarr` |
 | `examples` | `geo` + [`lazy_dino`][lazy_dino] | `examples/` |
 
 `baseline_encoding` and `anomaly_encoding` need none of these: they return plain

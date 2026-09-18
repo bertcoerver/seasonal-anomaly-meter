@@ -13,12 +13,12 @@ import xarray as xr
 from seasonal_anomaly_meter.anomaly import compute_anomaly
 from seasonal_anomaly_meter.baseline import build_baseline
 from seasonal_anomaly_meter.calendar import period_bounds
+from xr_utils import open_geozarr, write_geozarr
+
 from seasonal_anomaly_meter.io import (
     anomaly_encoding,
     baseline_encoding,
     check_packing_range,
-    open_zarr,
-    write_zarr,
 )
 from seasonal_anomaly_meter.season import season_indices
 
@@ -200,11 +200,11 @@ def test_stores_round_trip_with_their_crs(tmp_path, flux, seasons, baseline):
     result = compute_anomaly(flux, seasons, baseline, QUERY, YEAR_MIN).compute()
 
     check_packing_range(baseline, 0.1)
-    write_zarr(baseline, tmp_path / "baseline.zarr", baseline_encoding(baseline, scale_factor=0.1))
-    write_zarr(result, tmp_path / "anomaly.zarr", anomaly_encoding(result))
+    write_geozarr(baseline, tmp_path / "baseline.zarr", baseline_encoding(baseline, scale_factor=0.1))
+    write_geozarr(result, tmp_path / "anomaly.zarr", anomaly_encoding(result))
 
-    reopened_baseline = open_zarr(tmp_path / "baseline.zarr")
-    reopened_anomaly = open_zarr(tmp_path / "anomaly.zarr")
+    reopened_baseline = open_geozarr(tmp_path / "baseline.zarr")
+    reopened_anomaly = open_geozarr(tmp_path / "anomaly.zarr")
 
     assert reopened_baseline.rio.crs.to_epsg() == 32636
     assert reopened_anomaly.rio.crs.to_epsg() == 32636
@@ -228,11 +228,41 @@ def test_lazy_write_survives_dask_chunks_off_the_zarr_grid(tmp_path, flux, seaso
     assert misaligned["acc"].chunks[1] == (1, 1, 2)  # off the grid the encoding sets
 
     encoding = anomaly_encoding(misaligned, chunks=(2, 4))
-    write_zarr(misaligned, tmp_path / "anomaly.zarr", encoding)
+    write_geozarr(misaligned, tmp_path / "anomaly.zarr", encoding)
 
-    reopened = open_zarr(tmp_path / "anomaly.zarr")
+    reopened = open_geozarr(tmp_path / "anomaly.zarr")
     np.testing.assert_allclose(
         reopened["acc"].values, result["acc"].compute().values, equal_nan=True
+    )
+
+
+def test_anomaly_packing_leaves_the_unitless_fields_alone(tmp_path, flux, seasons, baseline):
+    """A flux scale factor applies to the flux's units and to nothing else.
+
+    ``anomaly_rel`` is a percentage and ``anomaly_z`` a count of standard
+    deviations; packing those at the flux's resolution would round a z-score to
+    whole sigma.
+    """
+    result = compute_anomaly(flux, seasons, baseline, QUERY, YEAR_MIN).compute()
+
+    encoding = anomaly_encoding(result, scale_factor=0.1)
+
+    assert encoding["anomaly_abs"]["dtype"] == "int16"
+    assert encoding["anomaly_abs"]["scale_factor"] == 0.1
+    assert encoding["anomaly_rel"]["dtype"] == "float32"
+    assert encoding["anomaly_z"]["dtype"] == "float32"
+    assert "scale_factor" not in encoding["anomaly_z"]
+    # The two masks stay integer, and unpacked: zero means "not in season".
+    assert encoding["DOS"]["dtype"] == "uint16"
+    assert encoding["season"]["dtype"] == "uint8"
+
+    write_geozarr(result, tmp_path / "anomaly.zarr", encoding)
+    reopened = open_geozarr(tmp_path / "anomaly.zarr")
+    np.testing.assert_allclose(
+        reopened["anomaly_abs"].values,
+        result["anomaly_abs"].values,
+        atol=0.05,  # int16 at scale_factor 0.1
+        equal_nan=True,
     )
 
 
@@ -249,8 +279,8 @@ def test_negative_anomalies_survive_the_store(tmp_path, flux, seasons, baseline)
     result = compute_anomaly(flux * 0.5, seasons, baseline, QUERY, YEAR_MIN).compute()
     assert float(result["anomaly_abs"].isel(time=0, y=0, x=0)) < 0
 
-    write_zarr(result, tmp_path / "anomaly.zarr", anomaly_encoding(result))
-    reopened = open_zarr(tmp_path / "anomaly.zarr")
+    write_geozarr(result, tmp_path / "anomaly.zarr", anomaly_encoding(result))
+    reopened = open_geozarr(tmp_path / "anomaly.zarr")
     assert float(reopened["anomaly_abs"].isel(time=0, y=0, x=0)) < 0
 
 
@@ -264,8 +294,8 @@ def test_dos_and_season_survive_the_store_as_integers(tmp_path, flux, seasons, b
     result = compute_anomaly(flux, seasons, baseline, "2021-01-15", YEAR_MIN).compute()
     assert int(result["DOS"].max()) == 0  # nothing is in season on this date
 
-    write_zarr(result, tmp_path / "anomaly.zarr", anomaly_encoding(result))
-    reopened = open_zarr(tmp_path / "anomaly.zarr")
+    write_geozarr(result, tmp_path / "anomaly.zarr", anomaly_encoding(result))
+    reopened = open_geozarr(tmp_path / "anomaly.zarr")
 
     assert reopened["DOS"].dtype == np.uint16
     assert reopened["season"].dtype == np.uint8

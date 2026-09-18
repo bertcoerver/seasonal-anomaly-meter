@@ -20,7 +20,7 @@ from functools import lru_cache
 from lazy_dino.databases.wapor.wapor import WAPOR_COG_BASE
 from lazy_dino.discovery.gismgr import GismgrDiscovery, is_utm_mosaicset
 
-__all__ = ["Tile", "list_tiles", "get_tile"]
+__all__ = ["Tile", "list_tiles"]
 
 
 @dataclass(frozen=True)
@@ -118,15 +118,3 @@ def list_tiles(variable: str) -> dict[str, Tile]:
             pixel_size=pixel_size,
         )
     return tiles
-
-
-def get_tile(variable: str, code: str) -> Tile:
-    """One tile by its MGRS grid-zone code, e.g. ``get_tile("L1-UTM-NPP-D", "36Q")``."""
-    tiles = list_tiles(variable)
-    try:
-        return tiles[code]
-    except KeyError:
-        raise KeyError(
-            f"{code!r} is not a tile of {variable!r}'s grid "
-            f"({len(tiles)} tiles available)."
-        ) from None

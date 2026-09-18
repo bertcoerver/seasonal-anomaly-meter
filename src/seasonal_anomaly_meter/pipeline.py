@@ -57,9 +57,10 @@ def seasonal_baseline(
     baseline, and the phenology at least those years.
 
     Returns a lazy Dataset of ``acc_mean``/``acc_std``/``acc_count``; write it
-    with :func:`~seasonal_anomaly_meter.io.write_zarr`. ``year_min`` is recorded in
-    its attributes and reused by :func:`seasonal_anomalies`, so the two stages
-    cannot drift onto different period axes.
+    with ``xr_utils.write_geozarr`` and
+    :func:`~seasonal_anomaly_meter.io.baseline_encoding`. ``year_min`` is
+    recorded in its attributes and reused by :func:`seasonal_anomalies`, so the
+    two stages cannot drift onto different period axes.
 
     ``resolution`` is inferred from the time axis when omitted. ``chunks`` sets
     the spatial chunk size; the ``time`` axis is always kept whole, because the
@@ -123,9 +124,9 @@ def seasonal_anomalies(
     """Stage 2: accumulated flux and its anomalies at each of ``dates``.
 
     ``baseline`` is a Stage 1 result, typically reopened from zarr with
-    :func:`~seasonal_anomaly_meter.io.open_zarr`. It fixes ``year_min``, and its
-    grid is checked against the flux -- a baseline built for a different area
-    fails here rather than producing plausible nonsense.
+    ``xr_utils.open_geozarr``. It fixes ``year_min``, and its grid is checked
+    against the flux -- a baseline built for a different area fails here rather
+    than producing plausible nonsense.
 
     ``flux`` need only reach back far enough to contain the start of every
     season active on ``dates``, not the whole archive; Copernicus seasons run up
@@ -149,7 +150,8 @@ def seasonal_anomalies(
         raise ValueError(
             "the baseline carries no 'year_min' attribute, so its period axis "
             "cannot be matched to the flux. Rebuild it with seasonal_baseline, "
-            "or open the store with io.open_zarr, which keeps attributes."
+            "or open the store with xr_utils.open_geozarr (or xr.open_zarr "
+            "with decode_coords='all'), which keeps attributes."
         ) from None
 
     dates = [np.datetime64(d, "D") for d in np.atleast_1d(dates)]
