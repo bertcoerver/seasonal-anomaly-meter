@@ -12,15 +12,16 @@ import xarray as xr
 
 from seasonal_anomaly_meter.anomaly import compute_anomaly
 from seasonal_anomaly_meter.baseline import build_baseline
-from seasonal_anomaly_meter.calendar import period_bounds
-from xr_utils import open_geozarr, write_geozarr
+from seasonal_anomaly_meter.calendar import dates_to_abs_index, period_bounds
+from xr_utils import append_geozarr, open_geozarr, write_geozarr
 
 from seasonal_anomaly_meter.io import (
     anomaly_encoding,
     baseline_encoding,
     check_packing_range,
 )
-from seasonal_anomaly_meter.season import season_indices
+from seasonal_anomaly_meter.pipeline import required_flux_start, seasonal_anomalies
+from seasonal_anomaly_meter.season import MAX_POS, season_indices
 
 YEAR_MIN = 2018
 YEARS = [2018, 2019, 2020, 2021]
@@ -50,18 +51,26 @@ def flux():
     ).rio.write_crs("EPSG:32636")
 
 
-@pytest.fixture
-def seasons(flux):
+def _phenology(flux, sosd=SOSD, eosd=EOSD):
     dims = ("season", "year", "y", "x")
     full = (1, len(YEARS), *SHAPE)
-    phenology = xr.Dataset(
+    return xr.Dataset(
         {
-            "SOSD": (dims, np.full(full, SOSD, dtype="float32")),
-            "EOSD": (dims, np.full(full, EOSD, dtype="float32")),
+            "SOSD": (dims, np.full(full, sosd, dtype="float32")),
+            "EOSD": (dims, np.full(full, eosd, dtype="float32")),
             "QA": (dims, np.zeros(full, dtype="uint8")),
         },
         coords={"season": [1], "year": YEARS, "y": flux["y"], "x": flux["x"]},
     )
+
+
+@pytest.fixture
+def phenology(flux):
+    return _phenology(flux)
+
+
+@pytest.fixture
+def seasons(phenology):
     return season_indices(phenology, YEAR_MIN)
 
 
@@ -407,3 +416,107 @@ def test_accumulation_is_never_negative_for_a_non_negative_flux(flux, seasons, b
         values = result["acc"].values
         finite = values[np.isfinite(values)]
         assert (finite >= 0).all(), f"negative accumulation on {date}"
+
+
+# --- required_flux_start: how little flux an operational rerun needs ---------
+
+
+def test_required_flux_start_follows_the_phenology(phenology, baseline):
+    """The window begins at the period the active season started in.
+
+    DOY 74 is 15 March in 2021, which falls in that month's second dekad -- so
+    the flux is needed from 11 March, not from some fixed lookback.
+    """
+    start = required_flux_start(phenology, baseline, [QUERY])
+
+    assert start == np.datetime64("2021-03-11")
+
+
+def test_required_flux_start_spans_every_query_date(phenology, baseline):
+    """Several dates take the earliest start among them, not the last one's."""
+    start = required_flux_start(phenology, baseline, ["2021-06-15", "2021-08-01"])
+
+    assert start == np.datetime64("2021-03-11")
+
+
+def test_required_flux_start_is_bounded_by_the_stored_slots(flux, baseline, caplog):
+    """A season older than the baseline's slot axis cannot be compared anyway.
+
+    ``interpolate_slot`` clips past MAX_POS, so the curve flatlines however much
+    flux is supplied. The window stops there and says so.
+    """
+    # SOSD -400 puts the season start well over a year before its nominal year.
+    ancient = _phenology(flux, sosd=-400, eosd=232)
+
+    with caplog.at_level("WARNING"):
+        start = required_flux_start(ancient, baseline, [QUERY])
+
+    query_idx = int(dates_to_abs_index([np.datetime64(QUERY, "D")], YEAR_MIN)[0])
+    floor, _ = period_bounds(np.array([query_idx - (MAX_POS - 1)]), YEAR_MIN)
+    assert start == floor[0]
+    assert "clamping the flux window" in caplog.text
+
+
+def test_required_flux_start_handles_a_date_with_no_season(phenology, baseline):
+    """Out of season everywhere: still returns a date the caller can slice on."""
+    start = required_flux_start(phenology, baseline, ["2021-01-05"])
+
+    assert isinstance(start, np.datetime64)
+
+
+def test_required_flux_start_needs_the_baseline_anchor_year(phenology, baseline):
+    with pytest.raises(ValueError, match="no 'year_min' attribute"):
+        required_flux_start(phenology, baseline.drop_attrs(), [QUERY])
+
+
+def test_a_trimmed_flux_window_gives_the_same_answer(flux, phenology, baseline):
+    """The load-bearing claim: trimming the flux changes nothing it computes.
+
+    This is what lets an operational rerun open a few months of flux instead of
+    the archive. If it ever fails, the windowing is wrong, not the trimming.
+    """
+    dates = ["2021-06-15", "2021-07-01"]
+
+    whole = seasonal_anomalies(flux, phenology, baseline, dates).compute()
+
+    start = required_flux_start(phenology, baseline, dates)
+    trimmed = seasonal_anomalies(
+        flux.sel(time=slice(start, None)), phenology, baseline, dates
+    ).compute()
+
+    # The trim has to be a real one, or the test proves nothing.
+    assert flux.sel(time=slice(start, None)).sizes["time"] < flux.sizes["time"] / 4
+    xr.testing.assert_allclose(whole, trimmed)
+
+
+def test_an_operationally_appended_date_matches_a_single_pass(
+    tmp_path, flux, phenology, baseline
+):
+    """The whole Stage 2 loop: build a store, then grow it a date at a time.
+
+    Each later date is computed from a flux window trimmed to what its own
+    season needs -- the operational case -- and must land exactly as it would
+    have in a single pass over every date at once.
+    """
+    dates = ["2021-06-15", "2021-07-01", "2021-07-11"]
+
+    at_once = tmp_path / "at_once.zarr"
+    whole = seasonal_anomalies(flux, phenology, baseline, dates)
+    write_geozarr(
+        whole, at_once, anomaly_encoding(whole, scale_factor=0.1), progress=False
+    )
+
+    staged = tmp_path / "staged.zarr"
+    first = seasonal_anomalies(flux, phenology, baseline, dates[:1])
+    write_geozarr(
+        first, staged, anomaly_encoding(first, scale_factor=0.1), progress=False
+    )
+    for date in dates[1:]:
+        start = required_flux_start(phenology, baseline, [date])
+        later = seasonal_anomalies(
+            flux.sel(time=slice(start, None)), phenology, baseline, [date]
+        )
+        append_geozarr(later, staged, progress=False)
+
+    xr.testing.assert_allclose(open_geozarr(at_once), open_geozarr(staged))
+    assert open_geozarr(staged).rio.crs.to_epsg() == 32636

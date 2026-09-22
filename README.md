@@ -98,6 +98,43 @@ anomalies = seasonal_anomalies(flux, phenology, baseline, ["2024-09-01"]).comput
 write_geozarr(anomalies, "36P_anomaly.zarr", anomaly_encoding(anomalies))
 ```
 
+### Running Stage 2 operationally
+
+`compute_anomaly` carries **no state between dates**: each one re-selects its
+season and rebuilds its own accumulation. So a date computed months later is
+identical to the same date computed in the first pass, and keeping the anomaly
+store current is a matter of appending the dates it does not yet hold — not of
+continuing anything.
+
+```python
+from xr_utils import append_geozarr
+
+from seasonal_anomaly_meter import required_flux_start
+
+have = set(open_geozarr(store)["time"].values)
+todo = [d for d in wanted if d not in have]
+
+# Only as much flux as the seasons running on `todo` actually need.
+start = required_flux_start(phenology, baseline, todo)
+new = seasonal_anomalies(flux.sel(time=slice(start, None)), phenology, baseline, todo)
+append_geozarr(new, store)
+```
+
+`required_flux_start` asks the phenology where the earliest season still running
+began, rather than guessing a fixed lookback, which for a single new period is
+typically a few months of flux instead of two years of it. It is bounded by
+`MAX_POS`: past the slots the baseline stores, the curve flatlines and no amount
+of extra flux makes the comparison mean anything.
+
+`anomaly_encoding` chunks one date per file along `time`, so an append never
+rewrites an earlier date. Appending is add-only — a date already in the store
+lands twice rather than replacing itself, so work out what is missing first. To
+*revise* a date already written (a flux revision, or real phenology arriving in
+place of a forward-filled year), region-write it with `xr_utils.store`, or
+rebuild the store.
+
+`examples/npp_single_tile_script.py` is this loop end to end against a WaPOR tile.
+
 This package builds the *encodings* — it knows the variable names and the
 dimension order, which is the part no general-purpose library can supply — and
 leaves the writing and reading to [`xr_utils.geozarr`][xr_utils], where
@@ -124,7 +161,7 @@ Anomaly outputs, on the flux's own grid:
 | `anomaly_rel` | percentage of baseline |
 | `anomaly_z` | standardised by the baseline's spread across years |
 
-Use `open_zarr` rather than `xr.open_zarr` to read these back: plain xarray
+Use `open_geozarr` rather than `xr.open_zarr` to read these back: plain xarray
 leaves `spatial_ref` as an ordinary variable and reports no CRS, though the store
 itself is fine and GDAL/QGIS read it correctly.
 

@@ -21,7 +21,13 @@ import xarray as xr
 
 from seasonal_anomaly_meter.anomaly import compute_anomaly
 from seasonal_anomaly_meter.baseline import DEFAULT_MIN_YEARS, build_baseline
-from seasonal_anomaly_meter.calendar import TemporalResolution, infer_resolution
+from seasonal_anomaly_meter.calendar import (
+    DEKADAL,
+    TemporalResolution,
+    dates_to_abs_index,
+    infer_resolution,
+    period_bounds,
+)
 from seasonal_anomaly_meter.inputs import (
     as_flux,
     check_phenology,
@@ -31,11 +37,12 @@ from seasonal_anomaly_meter.season import (
     MAX_POS,
     forward_fill_phenology,
     season_indices,
+    select_season,
 )
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["seasonal_baseline", "seasonal_anomalies"]
+__all__ = ["seasonal_baseline", "seasonal_anomalies", "required_flux_start"]
 
 
 def seasonal_baseline(
@@ -144,15 +151,7 @@ def seasonal_anomalies(
     check_same_grid(flux, baseline, "flux", "baseline")
 
     resolution = resolution or infer_resolution(flux["time"].values)
-    try:
-        year_min = int(baseline.attrs["year_min"])
-    except KeyError:
-        raise ValueError(
-            "the baseline carries no 'year_min' attribute, so its period axis "
-            "cannot be matched to the flux. Rebuild it with seasonal_baseline, "
-            "or open the store with xr_utils.open_geozarr (or xr.open_zarr "
-            "with decode_coords='all'), which keeps attributes."
-        ) from None
+    year_min = _year_min(baseline)
 
     dates = [np.datetime64(d, "D") for d in np.atleast_1d(dates)]
     query_year = max(int(str(d)[:4]) for d in dates)
@@ -181,6 +180,96 @@ def seasonal_anomalies(
         year_min=year_min,
     )
     return out
+
+
+def required_flux_start(
+    phenology: xr.Dataset,
+    baseline: xr.Dataset,
+    dates,
+    *,
+    resolution: TemporalResolution = DEKADAL,
+    forward_fill: bool = True,
+    max_pos: int = MAX_POS,
+) -> np.datetime64:
+    """The earliest flux date :func:`seasonal_anomalies` needs for ``dates``.
+
+    Stage 2 only reads back as far as the start of the earliest season still
+    running on one of ``dates``, and the phenology already knows where that is.
+    Asking it -- rather than guessing a fixed "two years should cover it" --
+    typically halves the flux an operational run has to open, which is most of
+    what makes running it per dekad in the cloud affordable.
+
+    Use it to trim the flux before handing it over::
+
+        start = required_flux_start(phenology, baseline, dates)
+        anomalies = seasonal_anomalies(
+            flux.sel(time=slice(start, None)), phenology, baseline, dates
+        )
+
+    The window is clamped at ``max_pos`` periods before the earliest query,
+    because the baseline stores only that many day-of-season slots: past them
+    :func:`~seasonal_anomaly_meter.accumulate.interpolate_slot` clips to the
+    last stored slot, so the curve flatlines and the comparison means nothing
+    however much flux is supplied. A pixel whose season began earlier still
+    comes back NaN rather than compared against that flat tail -- the
+    accumulation kernel treats a season starting before the flux as invalid.
+    When the clamp bites it is logged, with how far back the phenology asked.
+
+    ``forward_fill`` and ``resolution`` must match what
+    :func:`seasonal_anomalies` will be called with, or the window is computed
+    for different seasons than the ones it goes on to select. Only the
+    phenology is read here, which is small; the flux is never touched.
+    """
+    year_min = _year_min(baseline)
+    dates = [np.datetime64(d, "D") for d in np.atleast_1d(dates)]
+
+    if forward_fill:
+        query_year = max(int(str(d)[:4]) for d in dates)
+        phenology = forward_fill_phenology(phenology, query_year)
+    seasons = season_indices(phenology, year_min, resolution)
+
+    # One selection per date, because a pixel's active season changes between
+    # them: the earliest start over the whole set is what the flux must reach.
+    starts = xr.concat(
+        [select_season(seasons, d)["start_idx"] for d in dates], dim="_query"
+    )
+    earliest = float(starts.min())
+
+    first_query = int(dates_to_abs_index([min(dates)], year_min, resolution)[0])
+    floor = first_query - (max_pos - 1)
+
+    if not np.isfinite(earliest):
+        # No pixel is in season on any of these dates. Nothing needs the flux,
+        # but returning the floor keeps the caller's slice valid.
+        logger.info("no pixel is in season on any query date")
+        index = floor
+    elif earliest < floor:
+        logger.warning(
+            "the phenology reaches %d periods back, beyond the %d slots the "
+            "baseline stores; clamping the flux window, so pixels whose season "
+            "started earlier come back NaN",
+            first_query - int(earliest) + 1,
+            max_pos,
+        )
+        index = floor
+    else:
+        index = int(earliest)
+
+    start, _ = period_bounds(np.array([index]), year_min, resolution)
+    return np.datetime64(start[0], "D")
+
+
+def _year_min(baseline: xr.Dataset) -> int:
+    """The baseline's anchor year, which fixes the period axis both stages use."""
+    try:
+        return int(baseline.attrs["year_min"])
+    except KeyError:
+        raise ValueError(
+            "the baseline carries no 'year_min' attribute, so its period axis "
+            "cannot be matched to the flux. Rebuild it with seasonal_baseline, "
+            "or open the store with xr_utils.open_geozarr (or xr.open_zarr "
+            "with decode_coords='all'), which keeps attributes."
+        ) from None
 
 
 def _chunk(

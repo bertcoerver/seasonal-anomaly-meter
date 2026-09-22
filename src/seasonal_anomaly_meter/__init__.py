@@ -45,7 +45,11 @@ from seasonal_anomaly_meter.io import (
     baseline_encoding,
     check_packing_range,
 )
-from seasonal_anomaly_meter.pipeline import seasonal_anomalies, seasonal_baseline
+from seasonal_anomaly_meter.pipeline import (
+    required_flux_start,
+    seasonal_anomalies,
+    seasonal_baseline,
+)
 from seasonal_anomaly_meter.season import (
     MAX_POS,
     forward_fill_phenology,
@@ -62,6 +66,7 @@ __all__ = [
     # pipeline -- start here
     "seasonal_baseline",
     "seasonal_anomalies",
+    "required_flux_start",
     # inputs
     "align_phenology",
     "as_flux",
