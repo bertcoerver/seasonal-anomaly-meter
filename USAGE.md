@@ -181,15 +181,24 @@ Attributes:
 
 `value_encoding(ds)` returns the recommended storage type for each variable as a plain dict of CF keys (`dtype`, `scale_factor`, `_FillValue`). `to_zarr` and `to_netcdf` accept it directly; other writers can read the settings from it.
 
-| Output | Variable | Default storage | With `scale_factor=s` |
-|---|---|---|---|
-| baseline | `acc_mean`, `acc_std` | int16 at `scale_factor=0.1`, fill −32768 | int16 at `s`; `None` → float32 |
-| baseline | `acc_count` | uint8 | — |
-| anomalies | `acc`, `acc_baseline`, `anomaly_abs` | float32 | int16 at `s`, fill −32768 |
-| anomalies | `anomaly_rel`, `anomaly_z` | float32 | float32 (never packed) |
-| anomalies | `DOS`, `season` | uint16, uint8, no fill value | — |
+The example scripts use **`scale_factor=1.0` for both outputs**, i.e. `value_encoding(baseline, scale_factor=1.0)` and `value_encoding(anomalies, scale_factor=1.0)`. That gives:
 
-- **Check the range before packing.** int16 at `s` holds ±32767·s (±3276.7 at 0.1). `check_packing_range(baseline, s)` raises if the data doesn't fit; it computes the data. Use `scale_factor=None` to store float32 and skip the check.
+| Output | Variable | `dtype` | `scale_factor` | `_FillValue` | Stored resolution / range |
+|---|---|---|---|---|---|
+| baseline | `acc_mean` | int16 | 1.0 | −32768 | 1 gC/m2 (NPP) or 1 mm (AETI); ±32767 |
+| baseline | `acc_std` | int16 | 1.0 | −32768 | as above |
+| baseline | `acc_count` | uint8 | — | — | 0–255 years |
+| anomalies | `acc` | int16 | 1.0 | −32768 | 1 gC/m2 or 1 mm; ±32767 |
+| anomalies | `acc_baseline` | int16 | 1.0 | −32768 | as above |
+| anomalies | `anomaly_abs` | int16 | 1.0 | −32768 | as above; signed |
+| anomalies | `anomaly_rel` | float32 | — | NaN | full precision (%) |
+| anomalies | `anomaly_z` | float32 | — | NaN | full precision (sigma) |
+| anomalies | `DOS` | uint16 | — | none | 0–65535 days |
+| anomalies | `season` | uint8 | — | none | 0, 1, 2 |
+
+- **What `scale_factor` does:** it applies only to the variables in the flux's own units (`acc_mean`, `acc_std`, `acc`, `acc_baseline`, `anomaly_abs`). They are stored as int16, which rounds each value to the nearest multiple of `scale_factor` and limits the range to ±32767 × `scale_factor`. `anomaly_rel` and `anomaly_z` are never packed. With `scale_factor=None`, the flux-unit variables are stored as float32 instead.
+- **Without a `scale_factor` argument,** the defaults differ from the scripts: int16 at 0.1 for the baseline, and float32 for the anomalies.
+- **Check the range before packing.** `check_packing_range(baseline, scale_factor)` raises if the data doesn't fit the int16 range; it computes the data. At 1.0 the range is ±32767, far above a season's accumulated NPP or AETI.
 - **Never store anomalies as an unsigned type.** Deficits are negative.
 - **`DOS` and `season` have no fill value on purpose.** 0 is a real value (the not-in-season mask). A fill value would turn it into NaN when the data is read back.
 

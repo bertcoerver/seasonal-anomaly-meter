@@ -87,3 +87,6 @@ pytest
 
 Reading the Copernicus phenology in the examples needs CDSE credentials; store
 them once with `lazy_dino`'s `login()`.
+
+[lazy_dino]: https://github.com/bertcoerver/lazy-dino
+[xr_utils]: https://github.com/bertcoerver/xr-utils
