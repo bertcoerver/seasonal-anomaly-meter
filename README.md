@@ -9,12 +9,8 @@ season**. The baseline day can fall on a quite different calendar date from year
 to year, which is the whole reason for pairing phenology with the flux.
 
 **The package does no I/O.** You hand it two xarray objects and it hands back the
-anomalies, so it works with WaPOR and Copernicus or with anything else shaped
-like them. Fetching those two inputs from WaPOR and Copernicus via
-[`lazy_dino`][lazy_dino] lives in [`examples/`](examples/), outside the package.
-
-[lazy_dino]: https://github.com/bertcoerver/lazy_dino
-[xr_utils]: https://github.com/bertcoerver/xr-utils
+anomalies as an xarray object, so it works with WaPOR and Copernicus or with 
+anything else shaped like them.
 
 ## USAGE
 
