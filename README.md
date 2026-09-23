@@ -13,13 +13,15 @@ anomalies, so it works with WaPOR and Copernicus or with anything else shaped
 like them. Fetching those two inputs from WaPOR and Copernicus via
 [`lazy_dino`][lazy_dino] lives in [`examples/`](examples/), outside the package.
 
-> **To use the package, read [USAGE.md](USAGE.md).** It describes the inputs,
-> the two stages (`seasonal_baseline`, `required_flux_start` +
-> `seasonal_anomalies`), the output datasets, recommended storage encodings, and
-> a live dashboard built from the output.
-
 [lazy_dino]: https://github.com/bertcoerver/lazy_dino
 [xr_utils]: https://github.com/bertcoerver/xr-utils
+
+## USAGE
+
+**To use the package, read [USAGE.md](USAGE.md).** It describes the inputs,
+the two stages (`seasonal_baseline`, `required_flux_start` +
+`seasonal_anomalies`), the output datasets, recommended storage encodings, and
+a live dashboard built from the output.
 
 ## Design
 
@@ -51,36 +53,6 @@ consecutive cumulative slots is arithmetically identical to adding
 `rate * days_into_slot`, so such an array would be redundant — and at ~1.3 GB
 per tile, expensively so. `tests/test_accumulate.py` pins that equivalence.
 
-## Examples
-
-Three scripts run the pipeline against a WaPOR UTM tile (36P, Sudan) with NPP
-and Copernicus phenology, caching every intermediate as a Zarr store:
-
-| Script | Does |
-|---|---|
-| [`npp_single_tile_baseline.py`](examples/npp_single_tile_baseline.py) | Stage 1: the 2018–2025 baseline |
-| [`npp_single_tile_anomalies.py`](examples/npp_single_tile_anomalies.py) | Stage 2: appends the dekads in `DATES` that the anomaly store doesn't hold yet |
-| [`npp_single_tile_script.py`](examples/npp_single_tile_script.py) | both stages in one script |
-
-```bash
-pip install -e ".[examples]"
-python examples/npp_single_tile_baseline.py
-python examples/npp_single_tile_anomalies.py
-```
-
-Settings (tile, dates, working directory) are at the top of each script; pick a
-tile with `wapor_tiles.list_tiles("L1-UTM-NPP-D")` (527 of them).
-
-`examples/sources.py` and `examples/wapor_tiles.py` are the only code in this
-repository that uses `lazy_dino`. Swapping in a different data source means
-replacing those two files and nothing else.
-
-The scripts read and write with [`xr_utils.geozarr`][xr_utils]: `write_geozarr`
-makes a store that GDAL/QGIS open georeferenced, and `open_geozarr` brings the
-CRS back as a coordinate (plain `xr.open_zarr` reports none). `append_geozarr`
-is add-only — a date already in the store lands twice — so the scripts work out
-which dates are missing first.
-
 ## Scope and limits
 
 - Built for **dekadal** data (WaPOR L1).
@@ -90,7 +62,7 @@ which dates are missing first.
   and end are assumed to repeat the most recent year on record. Assumed years
   are flagged with a `forward_filled` coordinate; pass `forward_fill=False` to
   refuse rather than assume.
-- Mosaicking tiles and exporting global EPSG:4326 COGs is **not** done here yet.
+- Mosaicking tiles and exporting global EPSG:4326 COGs is **not** done.
 
 ## Installation
 
