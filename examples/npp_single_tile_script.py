@@ -31,7 +31,8 @@ logger = logging.getLogger("npp_single_tile")
 
 VARIABLE = "L1-UTM-NPP-D"
 TILE = "36P"
-DATES = [str(x.date()) for x in pd.date_range("2018-01-01", "2026-08-01") if x.day in [1, 11, 21]]
+# DATES = [str(x.date()) for x in pd.date_range("2018-01-01", "2026-08-01") if x.day in [1, 11, 21]]
+DATES = [str(x.date()) for x in pd.date_range("2026-08-11", "2026-09-01") if x.day in [1, 11, 21]]
 WORKDIR = Path(os.path.expanduser("~/Local/sam"))
 SCALE_FACTOR = 1.0
 CHUNK = 256
@@ -131,7 +132,7 @@ if not todo:
 else:
     # Only as much flux as the seasons running on these dates actually need,
     # which for a single new dekad is a few months rather than the archive.
-    flux_start = required_flux_start(phenology, baseline, todo)
+    flux_start = required_flux_start(phenology, todo)
     logger.info(
         "%d new date(s), %s to %s, from flux at %s",
         len(todo), todo[0], todo[-1], flux_start,

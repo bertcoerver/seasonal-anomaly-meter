@@ -31,6 +31,7 @@ __all__ = [
     "PACKED_FILL",
     "baseline_encoding",
     "anomaly_encoding",
+    "value_encoding",
     "check_packing_range",
 ]
 
@@ -147,6 +148,27 @@ def anomaly_encoding(
             spec["dtype"] = "float32"
         encoding[name] = spec
     return encoding
+
+
+#: Encoding keys that describe a zarr store's layout rather than the values.
+_LAYOUT_KEYS = ("chunks", "compressors")
+
+
+def value_encoding(ds: xr.Dataset, **kwargs) -> dict:
+    """The storage dtype, ``scale_factor`` and ``_FillValue`` of each variable.
+
+    :func:`baseline_encoding` or :func:`anomaly_encoding` -- picked by whether
+    ``ds`` is a baseline or an anomaly result -- without their zarr chunk and
+    compressor settings. What is left is plain CF packing, which ``to_zarr``,
+    ``to_netcdf`` and most other writers accept as is; choose chunking and
+    compression for your own format. ``kwargs`` (``scale_factor``) go to the
+    underlying function, so the defaults are the same.
+    """
+    build = baseline_encoding if "acc_mean" in ds else anomaly_encoding
+    return {
+        name: {k: v for k, v in spec.items() if k not in _LAYOUT_KEYS}
+        for name, spec in build(ds, **kwargs).items()
+    }
 
 
 def check_packing_range(ds: xr.Dataset, scale_factor: float, variables=("acc_mean", "acc_std")):

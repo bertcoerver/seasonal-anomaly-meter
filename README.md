@@ -115,7 +115,7 @@ have = set(open_geozarr(store)["time"].values)
 todo = [d for d in wanted if d not in have]
 
 # Only as much flux as the seasons running on `todo` actually need.
-start = required_flux_start(phenology, baseline, todo)
+start = required_flux_start(phenology, todo)
 new = seasonal_anomalies(flux.sel(time=slice(start, None)), phenology, baseline, todo)
 append_geozarr(new, store)
 ```
@@ -145,9 +145,9 @@ encodings are plain dicts, so `ds.to_zarr(store, encoding=..., consolidated=Fals
 works on the bare install and costs you only the georeferencing.
 
 The temporal resolution is read off the time axis; pass `resolution=` to override.
-`year_min` — the anchor both stages index their periods against — is recorded in
-the baseline's attributes and reused by `seasonal_anomalies`, so the two stages
-cannot drift onto different period axes.
+The baseline is indexed by day of season, not by calendar period, so it carries
+no anchor year: `seasonal_anomalies` needs nothing from it beyond its variables
+and grid, and a store that lost its attributes still works.
 
 Anomaly outputs, on the flux's own grid:
 

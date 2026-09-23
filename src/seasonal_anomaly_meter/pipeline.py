@@ -65,9 +65,9 @@ def seasonal_baseline(
 
     Returns a lazy Dataset of ``acc_mean``/``acc_std``/``acc_count``; write it
     with ``xr_utils.write_geozarr`` and
-    :func:`~seasonal_anomaly_meter.io.baseline_encoding`. ``year_min`` is
-    recorded in its attributes and reused by :func:`seasonal_anomalies`, so the
-    two stages cannot drift onto different period axes.
+    :func:`~seasonal_anomaly_meter.io.baseline_encoding`. It is indexed by
+    day-of-season slot, not by calendar period, so it carries no anchor year and
+    Stage 2 is free to pick its own.
 
     ``resolution`` is inferred from the time axis when omitted. ``chunks`` sets
     the spatial chunk size; the ``time`` axis is always kept whole, because the
@@ -130,10 +130,9 @@ def seasonal_anomalies(
 ) -> xr.Dataset:
     """Stage 2: accumulated flux and its anomalies at each of ``dates``.
 
-    ``baseline`` is a Stage 1 result, typically reopened from zarr with
-    ``xr_utils.open_geozarr``. It fixes ``year_min``, and its grid is checked
-    against the flux -- a baseline built for a different area fails here rather
-    than producing plausible nonsense.
+    ``baseline`` is a Stage 1 result, however it was stored and reopened. Its
+    grid is checked against the flux -- a baseline built for a different area
+    fails here rather than producing plausible nonsense.
 
     ``flux`` need only reach back far enough to contain the start of every
     season active on ``dates``, not the whole archive; Copernicus seasons run up
@@ -151,7 +150,7 @@ def seasonal_anomalies(
     check_same_grid(flux, baseline, "flux", "baseline")
 
     resolution = resolution or infer_resolution(flux["time"].values)
-    year_min = _year_min(baseline)
+    year_min = _anchor_year(phenology)
 
     dates = [np.datetime64(d, "D") for d in np.atleast_1d(dates)]
     query_year = max(int(str(d)[:4]) for d in dates)
@@ -177,14 +176,12 @@ def seasonal_anomalies(
         variable=baseline.attrs.get("variable", variable or flux.name or ""),
         units=flux.attrs.get("units", ""),
         baseline_years=baseline.attrs.get("baseline_years", ""),
-        year_min=year_min,
     )
     return out
 
 
 def required_flux_start(
     phenology: xr.Dataset,
-    baseline: xr.Dataset,
     dates,
     *,
     resolution: TemporalResolution = DEKADAL,
@@ -201,13 +198,13 @@ def required_flux_start(
 
     Use it to trim the flux before handing it over::
 
-        start = required_flux_start(phenology, baseline, dates)
+        start = required_flux_start(phenology, dates)
         anomalies = seasonal_anomalies(
             flux.sel(time=slice(start, None)), phenology, baseline, dates
         )
 
     The window is clamped at ``max_pos`` periods before the earliest query,
-    because the baseline stores only that many day-of-season slots: past them
+    because a baseline stores only that many day-of-season slots: past them
     :func:`~seasonal_anomaly_meter.accumulate.interpolate_slot` clips to the
     last stored slot, so the curve flatlines and the comparison means nothing
     however much flux is supplied. A pixel whose season began earlier still
@@ -220,7 +217,7 @@ def required_flux_start(
     for different seasons than the ones it goes on to select. Only the
     phenology is read here, which is small; the flux is never touched.
     """
-    year_min = _year_min(baseline)
+    year_min = _anchor_year(phenology)
     dates = [np.datetime64(d, "D") for d in np.atleast_1d(dates)]
 
     if forward_fill:
@@ -259,17 +256,15 @@ def required_flux_start(
     return np.datetime64(start[0], "D")
 
 
-def _year_min(baseline: xr.Dataset) -> int:
-    """The baseline's anchor year, which fixes the period axis both stages use."""
-    try:
-        return int(baseline.attrs["year_min"])
-    except KeyError:
-        raise ValueError(
-            "the baseline carries no 'year_min' attribute, so its period axis "
-            "cannot be matched to the flux. Rebuild it with seasonal_baseline, "
-            "or open the store with xr_utils.open_geozarr (or xr.open_zarr "
-            "with decode_coords='all'), which keeps attributes."
-        ) from None
+def _anchor_year(phenology: xr.Dataset) -> int:
+    """The year Stage 2 anchors its period axis on.
+
+    Any year works: the flux, the phenology and the query dates are all indexed
+    within the one call, and the baseline is read by day-of-season slot, which
+    is a difference of two indices and so independent of the anchor. The
+    phenology's first year is simply a convenient one that is always there.
+    """
+    return int(phenology["year"].min())
 
 
 def _chunk(

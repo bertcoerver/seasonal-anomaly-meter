@@ -19,6 +19,7 @@ from seasonal_anomaly_meter.io import (
     anomaly_encoding,
     baseline_encoding,
     check_packing_range,
+    value_encoding,
 )
 from seasonal_anomaly_meter.pipeline import required_flux_start, seasonal_anomalies
 from seasonal_anomaly_meter.season import MAX_POS, season_indices
@@ -275,6 +276,38 @@ def test_anomaly_packing_leaves_the_unitless_fields_alone(tmp_path, flux, season
     )
 
 
+def test_anomalies_need_only_the_phenology_around_the_query(flux, phenology, baseline):
+    """Stage 2 reads the seasons active on the query date, not the baseline years.
+
+    A season labelled with the previous year can still be running, so that
+    year is kept; everything older is irrelevant.
+    """
+    full = seasonal_anomalies(flux, phenology, baseline, [QUERY]).compute()
+    recent = phenology.sel(year=[2020, 2021])
+    trimmed = seasonal_anomalies(flux, recent, baseline, [QUERY]).compute()
+    xr.testing.assert_identical(full, trimmed)
+
+
+def test_value_encoding_is_the_packing_without_zarr_layout(tmp_path, flux, seasons, baseline):
+    """The format-agnostic encoding keeps dtypes and packing, and drops layout."""
+    result = compute_anomaly(flux, seasons, baseline, QUERY, YEAR_MIN).compute()
+
+    base = value_encoding(baseline)
+    anom = value_encoding(result, scale_factor=0.1)
+
+    assert base["acc_mean"] == {"dtype": "int16", "scale_factor": 0.1, "_FillValue": -32768}
+    assert base["acc_count"] == {"dtype": "uint8"}
+    assert anom["anomaly_abs"]["scale_factor"] == 0.1
+    assert anom["anomaly_z"] == {"dtype": "float32"}
+
+    # Plain CF keys, so a non-zarr writer takes them too.
+    baseline.to_netcdf(tmp_path / "baseline.nc", encoding=base)
+    reopened = xr.open_dataset(tmp_path / "baseline.nc")
+    np.testing.assert_allclose(
+        reopened["acc_mean"].values, baseline["acc_mean"].values, atol=0.05, equal_nan=True
+    )
+
+
 def test_packing_refuses_to_saturate(baseline):
     """Silent int16 saturation is the failure that produced wrapped values before."""
     too_big = baseline.copy()
@@ -421,25 +454,25 @@ def test_accumulation_is_never_negative_for_a_non_negative_flux(flux, seasons, b
 # --- required_flux_start: how little flux an operational rerun needs ---------
 
 
-def test_required_flux_start_follows_the_phenology(phenology, baseline):
+def test_required_flux_start_follows_the_phenology(phenology):
     """The window begins at the period the active season started in.
 
     DOY 74 is 15 March in 2021, which falls in that month's second dekad -- so
     the flux is needed from 11 March, not from some fixed lookback.
     """
-    start = required_flux_start(phenology, baseline, [QUERY])
+    start = required_flux_start(phenology, [QUERY])
 
     assert start == np.datetime64("2021-03-11")
 
 
-def test_required_flux_start_spans_every_query_date(phenology, baseline):
+def test_required_flux_start_spans_every_query_date(phenology):
     """Several dates take the earliest start among them, not the last one's."""
-    start = required_flux_start(phenology, baseline, ["2021-06-15", "2021-08-01"])
+    start = required_flux_start(phenology, ["2021-06-15", "2021-08-01"])
 
     assert start == np.datetime64("2021-03-11")
 
 
-def test_required_flux_start_is_bounded_by_the_stored_slots(flux, baseline, caplog):
+def test_required_flux_start_is_bounded_by_the_stored_slots(flux, caplog):
     """A season older than the baseline's slot axis cannot be compared anyway.
 
     ``interpolate_slot`` clips past MAX_POS, so the curve flatlines however much
@@ -449,7 +482,7 @@ def test_required_flux_start_is_bounded_by_the_stored_slots(flux, baseline, capl
     ancient = _phenology(flux, sosd=-400, eosd=232)
 
     with caplog.at_level("WARNING"):
-        start = required_flux_start(ancient, baseline, [QUERY])
+        start = required_flux_start(ancient, [QUERY])
 
     query_idx = int(dates_to_abs_index([np.datetime64(QUERY, "D")], YEAR_MIN)[0])
     floor, _ = period_bounds(np.array([query_idx - (MAX_POS - 1)]), YEAR_MIN)
@@ -457,16 +490,37 @@ def test_required_flux_start_is_bounded_by_the_stored_slots(flux, baseline, capl
     assert "clamping the flux window" in caplog.text
 
 
-def test_required_flux_start_handles_a_date_with_no_season(phenology, baseline):
+def test_required_flux_start_handles_a_date_with_no_season(phenology):
     """Out of season everywhere: still returns a date the caller can slice on."""
-    start = required_flux_start(phenology, baseline, ["2021-01-05"])
+    start = required_flux_start(phenology, ["2021-01-05"])
 
     assert isinstance(start, np.datetime64)
 
 
-def test_required_flux_start_needs_the_baseline_anchor_year(phenology, baseline):
-    with pytest.raises(ValueError, match="no 'year_min' attribute"):
-        required_flux_start(phenology, baseline.drop_attrs(), [QUERY])
+def test_stage_2_does_not_depend_on_the_anchor_year(flux, baseline):
+    """The baseline is read by day-of-season slot, a difference of two indices.
+
+    So Stage 2 may anchor its period axis on any year -- including one after
+    all the data, which makes every index negative -- and a baseline stored
+    without attributes is just as usable.
+    """
+    wobbly = flux * np.linspace(0.5, 2.0, flux.sizes["time"])[:, None, None]
+    cross_year = _phenology(flux, sosd=-40, eosd=200)
+    dates = ["2021-01-11", QUERY]
+
+    piped = seasonal_anomalies(wobbly, cross_year, baseline.drop_attrs(), dates).compute()
+    assert int(piped["DOS"].max()) > 0, "fixture should put the dates in season"
+
+    for anchor in (1990, 2021, 2030):
+        seasons = season_indices(cross_year, anchor)
+        by_hand = xr.concat(
+            [compute_anomaly(wobbly, seasons, baseline, d, anchor) for d in dates],
+            dim="time",
+        ).compute()
+        for name in piped.data_vars:
+            np.testing.assert_allclose(
+                piped[name].values, by_hand[name].values, equal_nan=True
+            )
 
 
 def test_a_trimmed_flux_window_gives_the_same_answer(flux, phenology, baseline):
@@ -479,7 +533,7 @@ def test_a_trimmed_flux_window_gives_the_same_answer(flux, phenology, baseline):
 
     whole = seasonal_anomalies(flux, phenology, baseline, dates).compute()
 
-    start = required_flux_start(phenology, baseline, dates)
+    start = required_flux_start(phenology, dates)
     trimmed = seasonal_anomalies(
         flux.sel(time=slice(start, None)), phenology, baseline, dates
     ).compute()
@@ -512,7 +566,7 @@ def test_an_operationally_appended_date_matches_a_single_pass(
         first, staged, anomaly_encoding(first, scale_factor=0.1), progress=False
     )
     for date in dates[1:]:
-        start = required_flux_start(phenology, baseline, [date])
+        start = required_flux_start(phenology, [date])
         later = seasonal_anomalies(
             flux.sel(time=slice(start, None)), phenology, baseline, [date]
         )

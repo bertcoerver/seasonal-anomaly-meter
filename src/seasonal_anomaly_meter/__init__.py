@@ -44,6 +44,7 @@ from seasonal_anomaly_meter.io import (
     anomaly_encoding,
     baseline_encoding,
     check_packing_range,
+    value_encoding,
 )
 from seasonal_anomaly_meter.pipeline import (
     required_flux_start,
@@ -93,6 +94,7 @@ __all__ = [
     # write_geozarr / open_geozarr
     "baseline_encoding",
     "anomaly_encoding",
+    "value_encoding",
     "check_packing_range",
     "__version__",
 ]

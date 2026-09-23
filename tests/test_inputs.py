@@ -227,7 +227,6 @@ def test_baseline_and_anomalies_round_trip_from_plain_datasets(flux, phenology):
     """A user with two xarray objects and no loader gets the whole product."""
     baseline = seasonal_baseline(flux, phenology).compute()
     assert set(baseline.data_vars) == {"acc_mean", "acc_std", "acc_count"}
-    assert baseline.attrs["year_min"] == YEAR_MIN
     assert baseline.attrs["units"] == "gC/m2"
 
     anomalies = seasonal_anomalies(flux, phenology, baseline, "2021-06-15").compute()
@@ -255,14 +254,6 @@ def test_a_baseline_from_elsewhere_is_rejected(flux, phenology):
     elsewhere = baseline.assign_coords(x=baseline["x"].values + 2e5)
     with pytest.raises(ValueError, match="flux and baseline"):
         seasonal_anomalies(flux, phenology, elsewhere, "2021-06-15")
-
-
-def test_a_baseline_without_its_anchor_year_is_rejected(flux, phenology):
-    """year_min ties both stages to one period axis; losing it shifts seasons."""
-    baseline = seasonal_baseline(flux, phenology).compute()
-    del baseline.attrs["year_min"]
-    with pytest.raises(ValueError, match="year_min"):
-        seasonal_anomalies(flux, phenology, baseline, "2021-06-15")
 
 
 def test_phenology_is_forward_filled_to_the_query_year(flux, phenology):

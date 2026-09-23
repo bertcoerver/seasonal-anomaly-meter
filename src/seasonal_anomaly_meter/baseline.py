@@ -109,7 +109,6 @@ def build_baseline(
         "min_years": min_years,
     }
     out.attrs.update(
-        year_min=year_min,
         temporal_resolution=resolution.name,
         min_years=min_years,
         baseline_years=f"{int(seasons['year'].min())}-{int(seasons['year'].max())}",
