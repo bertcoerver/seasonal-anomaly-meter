@@ -1,0 +1,44 @@
+{
+    "npp": {
+        "comment": "Only the current seasons' flux: the plan's period starts where required_flux_start says, not at the start of the archive.",
+        "variable": "net_primary_productivity_of_biomass_expressed_as_carbon",
+        "products": ["wapor-3.l1-utm-d"],
+        "space_dim": {"variable": null, "method": null},
+        "time_dim": {"variable": null, "method": null}
+    },
+    "SOSD": {
+        "comment": "The same entries as the baseline config: static and on the same grid, so the baseline plan's aligned stores serve this plan too.",
+        "variable": "start_of_growing_season_day_of_year",
+        "products": ["clms.lsp-300m"],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "EOSD": {
+        "variable": "end_of_growing_season_day_of_year",
+        "products": ["clms.lsp-300m"],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "QA": {
+        "variable": "growing_season_quality_flag",
+        "products": ["clms.lsp-300m"],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "acc_mean": {
+        "comment": "The baseline plan's derived:baseline, (season, pos, y, x). Derived with static=True, so time_dim null means no time axis here too. It is on this plan's grid already, so the nearest-neighbour warp moves nothing.",
+        "products": [{"upstream": "baseline", "attrs": {"long_name": "mean accumulated flux at day-of-season slot", "units": "g m-2"}}],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "acc_std": {
+        "products": [{"upstream": "baseline", "attrs": {"long_name": "standard deviation across baseline years", "units": "g m-2"}}],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "acc_count": {
+        "products": [{"upstream": "baseline", "attrs": {"long_name": "baseline years contributing to this slot", "units": "1"}}],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    }
+}

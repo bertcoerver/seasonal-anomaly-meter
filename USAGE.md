@@ -60,7 +60,7 @@ Attributes:
     units:  gC/m2/day
 ```
 
-- **The values must be a rate per day** (mm/day, gC/m2/day), as WaPOR publishes them, not a total per dekad. Each dekad is multiplied by its true length in days (8–11), so dekad totals would come out about 10× too high.
+- **The values must be a rate per day** (mm/day, gC/m2/day, or the CF spelling `g m-2 day-1`), as WaPOR publishes them, not a total per dekad. Each dekad is multiplied by its true length in days (8–11), so dekad totals would come out about 10× too high.
 - **Timestamps:** any date inside a dekad identifies it, whether that's its first day or its middle.
 - **NaN** means no data for that pixel and dekad.
 
@@ -82,6 +82,7 @@ Data variables:
 
 - `SOSD`/`EOSD` are 1-based day-of-year numbers relative to 1 January of `year`, not dates. They can be negative or above 365 when a season crosses a year boundary (−61 is late October of the previous year). NaN means no season.
 - When a pixel's two seasons overlap, the one with the better `QA` is used; if `QA` is equal, the longer one.
+- `QA` marks "no season" with 255, as Copernicus does. A float `QA` with NaN there is read the same way.
 
 ---
 

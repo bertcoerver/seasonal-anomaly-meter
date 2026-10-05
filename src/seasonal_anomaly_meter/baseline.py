@@ -32,7 +32,7 @@ from seasonal_anomaly_meter.calendar import (
     TemporalResolution,
     dates_to_abs_index,
 )
-from seasonal_anomaly_meter.inputs import check_same_grid
+from seasonal_anomaly_meter.inputs import accumulated_units, check_same_grid
 from seasonal_anomaly_meter.season import MAX_POS
 
 __all__ = ["build_baseline", "DEFAULT_MIN_YEARS"]
@@ -99,11 +99,15 @@ def build_baseline(
     # apply_ufunc leaves the core dims trailing; fix a canonical order so the
     # store's layout does not depend on how the inputs happened to be arranged.
     out = out.transpose("season", "pos", "y", "x")
+    units = accumulated_units(flux.attrs.get("units", ""))
     out["acc_mean"].attrs = {
         "long_name": "mean accumulated flux at day-of-season slot",
-        "units": flux.attrs.get("units", "").replace("/day", ""),
+        "units": units,
     }
-    out["acc_std"].attrs = {"long_name": "standard deviation across baseline years"}
+    out["acc_std"].attrs = {
+        "long_name": "standard deviation across baseline years",
+        "units": units,
+    }
     out["acc_count"].attrs = {
         "long_name": "baseline years contributing to this slot",
         "min_years": min_years,

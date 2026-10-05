@@ -35,6 +35,7 @@ from seasonal_anomaly_meter.baseline import build_baseline
 from seasonal_anomaly_meter.calendar import DEKADAL, MONTHLY, infer_resolution
 from seasonal_anomaly_meter.inputs import (
     PHENOLOGY_VARS,
+    accumulated_units,
     align_phenology,
     as_flux,
     check_phenology,
@@ -74,6 +75,7 @@ __all__ = [
     "check_phenology",
     "check_same_grid",
     "PHENOLOGY_VARS",
+    "accumulated_units",
     # methodology
     "season_indices",
     "select_season",

@@ -1,0 +1,28 @@
+{
+    "npp": {
+        "comment": "The flux, and the example grid: WaPOR's native UTM pixels, never resampled. One step per dekad, which is also the cube's time axis.",
+        "variable": "net_primary_productivity_of_biomass_expressed_as_carbon",
+        "products": ["wapor-3.l1-utm-d"],
+        "space_dim": {"variable": null, "method": null},
+        "time_dim": {"variable": null, "method": null}
+    },
+    "SOSD": {
+        "comment": "Copernicus phenology as (season, year, y, x): static, so time_dim null means no time axis. Nearest neighbour, because a day-of-year code averaged with its neighbours is a season boundary no pixel has.",
+        "variable": "start_of_growing_season_day_of_year",
+        "products": ["clms.lsp-300m"],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "EOSD": {
+        "variable": "end_of_growing_season_day_of_year",
+        "products": ["clms.lsp-300m"],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    },
+    "QA": {
+        "variable": "growing_season_quality_flag",
+        "products": ["clms.lsp-300m"],
+        "space_dim": {"variable": "npp", "method": {"name": "reproject", "resampling": "nearest"}},
+        "time_dim": null
+    }
+}

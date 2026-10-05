@@ -29,6 +29,7 @@ from seasonal_anomaly_meter.calendar import (
     period_bounds,
 )
 from seasonal_anomaly_meter.inputs import (
+    accumulated_units,
     as_flux,
     check_phenology,
     check_same_grid,
@@ -108,7 +109,7 @@ def seasonal_baseline(
         variable=variable or flux.name or "",
         # The store holds accumulations, so its units are the flux's with the
         # per-day part removed -- gC/m2, not gC/m2/day.
-        units=rate_units.replace("/day", ""),
+        units=accumulated_units(rate_units),
         rate_units=rate_units,
     )
     for key in ("crs_wkt", "epsg"):

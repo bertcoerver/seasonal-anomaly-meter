@@ -208,9 +208,11 @@ def _select_kernel(start_idx, start_date, end_idx, end_date, qa, *, query_date, 
     s_date, s_qa = pick(start_date), pick(qa)
 
     # Lowest QA wins, longest season breaks the tie -- combined into one score
-    # so a single argmax does both. 255 is the QA product's nodata.
+    # so a single argmax does both. 255 is the QA product's nodata, and NaN is
+    # what it becomes in a float array: left as NaN it would win the argmax.
     duration = np.where(active_any_year, e_idx - s_idx, -np.inf)
-    quality = np.where(active_any_year, s_qa.astype(np.float64), 255.0)
+    s_qa = s_qa.astype(np.float64)
+    quality = np.where(active_any_year & ~np.isnan(s_qa), s_qa, 255.0)
     score = np.where(active_any_year, -quality * 1e6 + duration, -np.inf)
 
     season_pos = score.argmax(axis=0)[np.newaxis]

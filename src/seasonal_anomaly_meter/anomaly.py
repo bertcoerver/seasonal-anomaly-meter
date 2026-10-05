@@ -30,6 +30,7 @@ from seasonal_anomaly_meter.calendar import (
     dates_to_abs_index,
     period_bounds,
 )
+from seasonal_anomaly_meter.inputs import accumulated_units
 from seasonal_anomaly_meter.season import select_season
 
 __all__ = ["compute_anomaly", "BASELINE_FLOOR"]
@@ -225,7 +226,7 @@ def _read_curve_kernel(curve, slot, label, fraction, *, labels):
 
 
 def _stamp_attrs(out: xr.Dataset, flux: xr.DataArray) -> None:
-    amount_units = flux.attrs.get("units", "").replace("/day", "")
+    amount_units = accumulated_units(flux.attrs.get("units", ""))
     out["DOS"].attrs = {
         "long_name": "days since start of season",
         "units": "days",

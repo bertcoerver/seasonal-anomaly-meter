@@ -8,7 +8,8 @@ Everything downstream works on two caller-supplied arrays:
 
 ``phenology``
     ``(season, year, y, x)`` with ``SOSD`` and ``EOSD`` as day-of-year numbers
-    and an optional ``QA``, already on the flux's grid.
+    and an optional ``QA``, already on the flux's grid. ``QA`` says "no season"
+    as Copernicus does, with 255, or as a float array does, with NaN.
 
 Where those come from is the caller's business: WaPOR and Copernicus are what
 the methodology was built for, but nothing here knows that. See
@@ -25,6 +26,7 @@ surface as implausible numbers weeks later.
 from __future__ import annotations
 
 import logging
+import re
 
 import numpy as np
 import xarray as xr
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "PHENOLOGY_VARS",
+    "accumulated_units",
     "align_phenology",
     "as_flux",
     "check_phenology",
@@ -49,6 +52,19 @@ PHENOLOGY_VARS = ("SOSD", "EOSD")
 #: of the year before -- but a value beyond this range means the field holds
 #: something other than a day-of-year, most likely a date or a scaled integer.
 _DOY_LIMITS = (-250.0, 620.0)
+
+#: The per-day part of a rate's units, in either spelling: ``/day`` or ``/d``
+#: (``gC/m2/day``), or the CF exponent form (``g m-2 day-1``).
+_PER_DAY = re.compile(r"\s*(?:/\s*(?:day|d)\b|\b(?:day|d)-1\b)")
+
+
+def accumulated_units(rate_units: str) -> str:
+    """The units of a per-day rate once it is accumulated over days.
+
+    ``gC/m2/day`` becomes ``gC/m2`` and ``g m-2 day-1`` becomes ``g m-2``;
+    units that name no day are returned as they are.
+    """
+    return _PER_DAY.sub("", str(rate_units)).strip()
 
 
 def as_flux(flux: xr.DataArray | xr.Dataset, variable: str | None = None) -> xr.DataArray:
@@ -95,7 +111,7 @@ def as_flux(flux: xr.DataArray | xr.Dataset, variable: str | None = None) -> xr.
         )
 
     units = str(flux.attrs.get("units", ""))
-    if units and not any(tag in units for tag in ("/day", "/d", "day-1", "d-1")):
+    if units and not _PER_DAY.search(units):
         logger.warning(
             "flux units are %r, which does not look like a per-day rate. "
             "Accumulation weights each period by its length in days, so "

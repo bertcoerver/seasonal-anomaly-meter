@@ -17,6 +17,7 @@ import xarray as xr
 from seasonal_anomaly_meter import (
     DEKADAL,
     MONTHLY,
+    accumulated_units,
     as_flux,
     check_phenology,
     infer_resolution,
@@ -147,10 +148,25 @@ def test_per_period_totals_are_warned_about(caplog):
         as_flux(make_flux(units="gC/m2"))
     assert "per-day rate" in caplog.text
 
-    caplog.clear()
-    with caplog.at_level("WARNING"):
-        as_flux(make_flux(units="gC/m2/day"))
-    assert caplog.text == ""
+    for per_day in ("gC/m2/day", "g m-2 day-1", "mm/d", "mm d-1"):
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            as_flux(make_flux(units=per_day))
+        assert caplog.text == "", per_day
+
+
+@pytest.mark.parametrize("rate, amount", [
+    ("gC/m2/day", "gC/m2"),
+    ("mm/day", "mm"),
+    ("mm/d", "mm"),
+    ("g m-2 day-1", "g m-2"),       # the CF spelling
+    ("kg m-2 d-1", "kg m-2"),
+    ("g/dm2/day", "g/dm2"),         # a d that is not a day stays
+    ("gC/m2", "gC/m2"),
+    ("", ""),
+])
+def test_accumulating_a_rate_drops_its_per_day(rate, amount):
+    assert accumulated_units(rate) == amount
 
 
 # ---- check_phenology -----------------------------------------------------
@@ -228,6 +244,8 @@ def test_baseline_and_anomalies_round_trip_from_plain_datasets(flux, phenology):
     baseline = seasonal_baseline(flux, phenology).compute()
     assert set(baseline.data_vars) == {"acc_mean", "acc_std", "acc_count"}
     assert baseline.attrs["units"] == "gC/m2"
+    assert baseline["acc_mean"].attrs["units"] == "gC/m2"
+    assert baseline["acc_std"].attrs["units"] == "gC/m2"
 
     anomalies = seasonal_anomalies(flux, phenology, baseline, "2021-06-15").compute()
     # Flux is a constant 1 unit/day in every year, so every year accumulates

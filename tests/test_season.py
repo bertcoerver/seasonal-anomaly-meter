@@ -107,6 +107,23 @@ def test_overlapping_seasons_resolved_by_quality_then_duration():
     assert int(picked["season"].isel(y=0, x=0)) == 1
 
 
+def test_a_nan_quality_is_no_season_like_255():
+    """A float QA says "no season" with NaN; it must lose as 255 does."""
+    query = np.datetime64("2019-05-30")
+    sosd = np.array([[74, 74, 74], [100, 100, 100]], dtype="float32")
+    eosd = np.array([[300, 300, 300], [200, 200, 200]], dtype="float32")
+
+    # season 1 has no quality at all; season 2 is poor, but it is something.
+    as_255 = phenology(sosd, eosd, np.array([[255] * 3, [200] * 3]), seasons=(1, 2))
+    as_nan = as_255.assign(QA=as_255["QA"].astype("float32").where(as_255["QA"] != 255))
+    assert bool(as_nan["QA"].isnull().any())
+
+    expected = select_season(season_indices(as_255, YEAR_MIN), query)
+    picked = select_season(season_indices(as_nan, YEAR_MIN), query)
+    assert int(picked["season"].isel(y=0, x=0)) == 2
+    xr.testing.assert_identical(picked, expected)
+
+
 def test_select_matches_between_numpy_and_dask():
     """The kernel runs chunked in the pipeline and unchunked in tests."""
     seasons = season_indices(phenology(74, 232), YEAR_MIN)
